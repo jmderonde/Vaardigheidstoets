@@ -47,7 +47,7 @@ npm test               # rooktest van de hele API (tijdelijke database)
    turso db tokens create vaardigheidstoets     # TURSO_AUTH_TOKEN
    ```
    De tabellen worden bij het opstarten automatisch aangemaakt.
-2. **Render**: maak een *Blueprint* aan vanuit deze repository (`render.yaml`), of een *Web Service* met build `npm ci` en start `npm start`.
+2. **Render**: maak een *Blueprint* aan vanuit deze repository (`render.yaml`), of een *Web Service* met runtime **Docker** (de `Dockerfile` staat in de repo). Zonder Docker kan het ook als Node-service met build `npm ci` en start `npm start`. Het runtime-type kan na het aanmaken niet meer gewijzigd worden.
 3. Vul in Render de omgevingsvariabelen in (zie `.env.example`): `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. `SESSION_SECRET` wordt gegenereerd; `BASE_URL` staat op `https://vaardigheidstoets.onrender.com`.
 4. Log in met het beheerdersaccount, maak een wedstrijddag aan en volg de tabbladen: Algemeen → Ploegen → Juryleden → Criteria → Toegang.
 

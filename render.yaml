@@ -2,12 +2,11 @@
 services:
   - type: web
     name: vaardigheidstoets
-    runtime: node
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     # "free" slaapt na 15 minuten zonder verkeer (eerste verzoek duurt dan ~1 minuut).
     # Zet voor een wedstrijddag minimaal "starter" in, zodat de app altijd direct reageert.
     plan: free
-    buildCommand: npm ci
-    startCommand: npm start
     healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
