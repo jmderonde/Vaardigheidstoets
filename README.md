@@ -9,7 +9,8 @@ Webapp voor het digitaal beoordelen van brandweer-vaardigheidstoetsen. Een organ
 | **Beheerder** | e-mail + wachtwoord | Maakt wedstrijddagen aan; koppelt ploegen en juryleden; richt criteria, functies en tijdregels in |
 | **Jury** | e-mail + wachtwoord | Stuurt de dag aan in de console (meerdere juryleden tegelijk): start en stopt inzetten, koppelt waarnemers, past de planning aan, corrigeert scores (met toelichting), bedient de prijsuitreiking |
 | **Waarnemer** | dagcode of QR-code + naam | Beoordeelt één functie van de ploeg die nu speelt, ook zonder verbinding |
-| **Tijdwaarnemer** | als waarnemer, gekoppeld door de jury | Markeert ploegen als *gemeld* en *ready to start* |
+| **Coördinator** | als waarnemer, gekoppeld door de jury | Zit op de basislocatie en markeert ploegen als *aanwezig* |
+| **Baanleider** | als waarnemer, gekoppeld door de jury | Staat op de locatie van het incident: markeert *ploeg klaar*, bedient **start inzet**, **slachtoffer bevrijd** en **einde inzet**, en kan de beoordelingen van alle functies van de lopende ploeg aanpassen (wordt gelogd) |
 | **Groot scherm** | geheime link, geen login | Live status, planning, tussenstand en prijsuitreiking voor in de zaal |
 
 ## Spelregels in de app
@@ -18,6 +19,7 @@ Webapp voor het digitaal beoordelen van brandweer-vaardigheidstoetsen. Een organ
 - Bonus: 1 punt (instelbaar) per resterende minuut speeltijd en per resterende minuut redtijd. Bij gelijke stand wint de minste speeltijd.
 - Beoordelen kan alleen terwijl de inzet loopt, plus een afrondtijd (standaard 5 minuten) na het einde. De server dwingt dit af, ook voor de offline wachtrij (op basis van het tijdstip van invoer).
 - Een volgende inzet kan pas starten als de afrondtijd van de vorige voorbij is.
+- Meerdere slachtoffers: stel het aantal in bij Algemeen. De redtijd loopt tot het laatste slachtoffer bevrijd is; het aantal staat vast zodra de eerste inzet start.
 - Een ploeg kan vervallen (reden verplicht); de planning is aan te passen (tijden, volgorde, alles verschuiven).
 - De jury kan achteraf scores en tijden corrigeren; een toelichting is altijd verplicht en alles komt in het logboek.
 - Tijdens de prijsuitreiking stuurt de server alleen de gegevens van reeds onthulde plekken naar het groot scherm.
@@ -56,8 +58,8 @@ npm test               # rooktest van de hele API (tijdelijke database)
 ## Op de wedstrijddag
 
 1. Jury opent de console (`/day/<id>`); waarnemers gaan naar `/join` of scannen de QR-code (Inrichten → Toegang, of tabblad Dag in de console).
-2. De jury koppelt iedere aanmelding aan een functie (of *Tijdwaarnemer*).
-3. Per ploeg: tijdwaarnemer markeert *gemeld* en *ready*, de jury drukt op **Start inzet**, markeert *Slachtoffer gered* en **Einde inzet**. De waarnemers krijgen daarna afrondtijd.
+2. De jury koppelt iedere aanmelding aan een functie, of aan *Coördinator* of *Baanleider*.
+3. Per ploeg: de coördinator markeert de ploeg als *aanwezig*, de baanleider als *klaar* en drukt op **Start inzet**, **Slachtoffer bevrijd** en **Einde inzet** (de jury kan dit ook). De waarnemers krijgen daarna afrondtijd.
 4. Aan het eind: *Uitslag vergrendelen*, daarna *Prijsuitreiking* starten. Open het groot scherm (`/display/<sleutel>`) in de zaal.
 5. Rapporten per ploeg (afdrukken/PDF) en een CSV-export staan onder *Dag*.
 

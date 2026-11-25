@@ -40,7 +40,8 @@ export function tickTimeline(root, now) {
 /* ---------- live inzet ---------- */
 export function stepsOf(t) {
   if (!t) return [];
-  const flags = [['Gemeld', !!(t.gemeld_at || t.gemeld)], ['Ready', !!(t.ready_at || t.ready)], ['Start', !!t.started_at], ['Gered', !!t.rescued_at], ['Einde', !!t.ended_at], ['Afronden', t.status === 'done'], ['Vergrendeld', t.status === 'done']];
+  const V = t.victims || 1;
+  const flags = [['Aanwezig', !!(t.gemeld_at || t.gemeld)], ['Ready', !!(t.ready_at || t.ready)], ['Start', !!t.started_at], [V > 1 ? `Gered ${t.rescued_n || 0}/${V}` : 'Gered', !!t.rescued_at], ['Einde', !!t.ended_at], ['Afronden', t.status === 'done'], ['Vergrendeld', t.status === 'done']];
   // "Afronden" is klaar zodra de afrondtijd voorbij is; "Vergrendeld" volgt direct.
   const cur = flags.findIndex((f) => !f[1]);
   return flags.map(([n, d], i) => `<div class="${d ? 'ok' : i === cur ? 'cur' : ''}">${d ? '✓ ' : ''}${n}</div>`);
@@ -57,7 +58,7 @@ export function liveHTML(t, s, controls = '') {
     <circle cx="140" cy="140" r="96" fill="none" stroke="rgba(56,189,248,.2)" stroke-dasharray="2 8"/></svg>
     <div class="mid"><div class="big" data-l="big">00:00</div><div class="lbl" data-l="lbl">speeltijd</div><div class="max" data-l="max">max ${fmtMs(s.maxSpeelMin * 60000)}</div></div></div>
    <div><div class="team">${idle ? 'Geen inzet actief' : esc(t.name)}</div><div style="margin-top:8px">${state}</div>
-    <div class="meta"><div class="kv"><small>Redtijd</small><b class="g" data-l="red">–</b></div><div class="kv"><small>Bonus redtijd</small><b class="g" data-l="bred">–</b></div><div class="kv"><small>Bonus speeltijd nu</small><b class="c" data-l="bsp">–</b></div></div>
+    <div class="meta"><div class="kv"><small data-l="redlbl">Redtijd</small><b class="g" data-l="red">–</b></div><div class="kv"><small>Bonus redtijd</small><b class="g" data-l="bred">–</b></div><div class="kv"><small>Bonus speeltijd nu</small><b class="c" data-l="bsp">–</b></div></div>
     <div class="steps">${stepsOf(t).join('')}</div>${controls}</div></div>`;
 }
 
@@ -75,6 +76,8 @@ export function tickLive(root, t, s, now) {
   q('lbl').textContent = wrap ? 'afrondtijd waarnemers' : 'speeltijd';
   q('max').textContent = wrap ? 'speeltijd ' + fmtMs(sp) : 'max ' + fmtMs(maxS);
   const red = t.rescued_at ? t.rescued_at - t.started_at : null;
+  const V = t.victims || 1;
+  q('redlbl').textContent = V > 1 ? `Redtijd · ${t.rescued_n || 0}/${V} gered` : 'Redtijd';
   q('red').textContent = red != null ? fmtMs(red) : (t.ended_at ? 'niet gered' : fmtMs(now - t.started_at));
   q('red').style.opacity = red != null ? 1 : 0.6;
   q('bred').textContent = red != null ? '+' + fmtN(bonusPts(red, s.maxRedMin, s)) : '–';
@@ -86,7 +89,7 @@ export function nextHTML(next, later, outs, controls = '') {
   if (!next) return '<div class="nm">Geen ploegen meer</div><p class="mut">Alle ploegen zijn gespeeld of vervallen.</p>';
   const ready = !!(next.ready_at || next.ready);
   return `<div class="nm">${esc(next.name)}</div>
-   ${ready ? `<span class="rd">⚡ READY TO START</span>${next.ready_by ? `<div class="mut" style="font-size:12px">gemarkeerd door ${esc(next.ready_by)}</div>` : ''}` : `<span class="rd grey">○ WACHT OP READY</span><div class="mut" style="font-size:12px">${next.gemeld_at || next.gemeld ? 'ploeg is gemeld' : 'ploeg heeft zich nog niet gemeld'}</div>`}
+   ${ready ? `<span class="rd">⚡ READY TO START</span>${next.ready_by ? `<div class="mut" style="font-size:12px">gemarkeerd door ${esc(next.ready_by)}</div>` : ''}` : `<span class="rd grey">○ WACHT OP READY</span><div class="mut" style="font-size:12px">${next.gemeld_at || next.gemeld ? 'ploeg is aanwezig' : 'ploeg is nog niet aanwezig'}</div>`}
    <div class="cd" data-cd="${hmMin(next.start) ?? ''}">--:--</div><div class="cdl" data-cdl>${next.start ? 'tot geplande start ' + esc(next.start) : 'geen starttijd ingesteld'}</div>
    <div class="meta" style="grid-template-columns:1fr 1fr;margin:12px 0 0"><div class="kv"><small>Meldtijd</small><b>${esc(next.meld || '–')}</b></div><div class="kv"><small>Starttijd</small><b>${esc(next.start || '–')}</b></div></div>
    ${controls}

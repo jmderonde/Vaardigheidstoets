@@ -10,6 +10,7 @@ export const LABELS = {
 export const DEFAULT_SETTINGS = {
   maxSpeelMin: 30, maxRedMin: 20, bonusPerMin: 1, rounding: 'floor', // floor | round | exact
   wrapMin: 5, noteBelow: 5, lateSyncMin: 30,
+  victims: 1, // aantal slachtoffers; redtijd = tijd tot het laatste slachtoffer gered is
 };
 export const parseSettings = (day) => {
   let s = {};
@@ -34,11 +35,12 @@ export const TEMPLATE = {
   ],
 };
 
-export async function createDay({ title, date, place, trophy }) {
+export async function createDay({ title, date, place, trophy, victims }) {
   const now = Date.now();
+  const v = Math.max(1, Math.min(10, Math.round(Number(victims)) || 1));
   const r = await run(
     'INSERT INTO days(title,date,place,trophy,join_code,display_key,settings,created_at) VALUES(?,?,?,?,?,?,?,?)',
-    [title, date || '', place || '', trophy || 'De wisselbeker', code(6), rid(24), JSON.stringify({}), now]);
+    [title, date || '', place || '', trophy || 'De wisselbeker', code(6), rid(24), JSON.stringify({ victims: v }), now]);
   const dayId = r.id;
   const roleIds = [];
   for (const [i, name] of TEMPLATE.roles.entries()) roleIds.push((await run('INSERT INTO roles(day_id,name,sort) VALUES(?,?,?)', [dayId, name, i])).id);
@@ -73,6 +75,8 @@ export async function loadConfig(dayId) {
 }
 export const loadScores = (dayId) =>
   all('SELECT s.* FROM scores s JOIN teams t ON t.id=s.team_id WHERE t.day_id=?', [dayId]);
+export const loadRescues = (dayId) =>
+  all('SELECT r.* FROM rescues r JOIN teams t ON t.id=r.team_id WHERE t.day_id=? ORDER BY r.team_id,r.seq', [dayId]);
 export const loadFinals = (dayId) =>
   all('SELECT f.* FROM finals f JOIN teams t ON t.id=f.team_id WHERE t.day_id=?', [dayId]);
 

@@ -1,27 +1,34 @@
-import { $, api, ask, clockOf, confirmBox, debounce, esc, fail, fmtMs, setOffset, snow, sse, toast, typing } from '../lib.js';
+import { $, api, clockOf, confirmBox, debounce, esc, fail, fmtMs, setOffset, snow, sse, toast, typing } from '../lib.js';
 import { go } from '../router.js';
 import { getObserver, setObserver } from './access.js';
 
 const QK = 'vt_obs_queue', SK = 'vt_obs_state';
 const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* geen opslag */ } };
+const STAFF = { coordinator: 'coördinator', baanleider: 'baanleider' };
 
-/* Het scherm van de waarnemer: werkt ook zonder verbinding (wachtrij met tijdstempels). */
+/* Scherm voor waarnemers, coördinator en baanleider. Scoren werkt ook zonder verbinding (wachtrij met tijdstempels). */
 export async function observerView(root) {
   const me = getObserver();
   if (!me) { go('/join', true); return; }
   const H = { 'x-observer-token': me.token };
   let S = null, online = true, queue = read(QK, []), flushing = false;
   let mode = sessionStorage.getItem('vt_obs_mode') || 'card';
-  let idx = null;
+  let idx = null, baanRole = null;
 
   /* ---------- gegevens ---------- */
+  const baanRoles = () => (S && S.baan) || [];
   const applyQueue = () => {
-    if (!S || !S.team || S.mode !== 'scoring') return;
+    if (!S || !S.team) return;
     for (const it of queue) {
       if (it.team_id !== S.team.id) continue;
-      if (it.type === 'score') S.scores[it.criterion_id] = { value: it.value, note: it.note || '' };
-      if (it.type === 'finish') S.finished = true;
+      if (S.mode === 'scoring') {
+        if (it.type === 'score') S.scores[it.criterion_id] = { value: it.value, note: it.note || '' };
+        if (it.type === 'finish') S.finished = true;
+      } else if (S.mode === 'baan' && it.type === 'score') {
+        const r = baanRoles().find((x) => x.id === it.role_id);
+        if (r) r.scores[it.criterion_id] = { value: it.value, note: it.note || '' };
+      }
     }
   };
   async function load() {
@@ -65,26 +72,29 @@ export async function observerView(root) {
   }
   const enqueue = (item) => { queue.push({ ...item, ts: snow() }); write(QK, queue); flush(); };
 
-  /* ---------- afgeleide waarden ---------- */
-  const items = () => (S.criteria || []).flatMap((c) => c.items.map((i) => ({ ...i, cat: c.name })));
-  const val = (id) => (S.scores[id] ? S.scores[id].value : null);
-  const needsNote = (id) => { const e = S.scores[id]; return !!(e && e.value && e.value <= S.settings.noteBelow); };
-  const noteOk = (id) => !needsNote(id) || !!(S.scores[id].note || '').trim();
+  /* ---------- context: eigen functie, of (baanleider) de gekozen functie ---------- */
+  const curRole = () => (S.mode === 'baan' ? baanRoles().find((r) => r.id === baanRole) || baanRoles()[0] : null);
+  const curScores = () => (S.mode === 'baan' ? (curRole() ? curRole().scores : {}) : S.scores);
+  const curCriteria = () => (S.mode === 'baan' ? (curRole() ? curRole().criteria : []) : S.criteria || []);
+  const items = () => curCriteria().flatMap((c) => c.items.map((i) => ({ ...i, cat: c.name })));
+  const val = (id) => (curScores()[id] ? curScores()[id].value : null);
+  const needsNote = (id) => { const e = curScores()[id]; return !!(e && e.value && e.value <= S.settings.noteBelow); };
+  const noteOk = (id) => !needsNote(id) || !!(curScores()[id].note || '').trim();
   const stat = () => {
     const it = items();
     return { total: it.length, done: it.filter((i) => val(i.id)).length, miss: it.filter((i) => val(i.id) && !noteOk(i.id)).length };
   };
   const windowOpen = () => {
-    if (S.mode !== 'scoring' || !S.team || S.finished || S.day.phase === 'locked') return false;
-    if (S.team.status === 'run') return true;
-    if (S.team.status === 'wrap') return snow() < S.team.wrap_end;
-    return false;
+    if (!S.team || S.day.phase === 'locked') return false;
+    const inWindow = S.team.status === 'run' || (S.team.status === 'wrap' && snow() < S.team.wrap_end);
+    if (S.mode === 'baan') return inWindow;
+    return S.mode === 'scoring' && !S.finished && inWindow;
   };
 
   /* ---------- tekenen ---------- */
-  const head = () => `<header class="top"><a class="brand" href="/obs" data-link><span class="logo"></span><span><b>${esc(S.day.title)}</b><small>${esc(S.observer.name)}${S.role ? ' · ' + esc(S.role.name) : ''}${S.observer.timekeeper ? ' · tijdwaarnemer' : ''}</small></span></a>
+  const head = () => `<header class="top"><a class="brand" href="/obs" data-link><span class="logo"></span><span><b>${esc(S.day.title)}</b><small>${esc(S.observer.name)}${S.role ? ' · ' + esc(S.role.name) : ''}${S.observer.staff ? ' · ' + STAFF[S.observer.staff] : ''}</small></span></a>
     <button class="btn sm" data-leave>Afmelden</button></header>
-    ${!online ? `<div class="offline">⚠ Geen verbinding. Je scores worden bewaard en automatisch verstuurd zodra je weer online bent${queue.length ? ` (${queue.length} in de wachtrij)` : ''}.</div>`
+    ${!online ? `<div class="offline">⚠ Geen verbinding. ${S.mode === 'baan' ? 'Beoordelingen worden bewaard en verstuurd zodra je weer online bent; de knoppen voor de inzet werken alleen met verbinding.' : 'Je scores worden bewaard en automatisch verstuurd zodra je weer online bent'}${queue.length ? ` (${queue.length} in de wachtrij)` : ''}.</div>`
       : queue.length ? `<div class="note">${queue.length} wijziging(en) worden verstuurd…</div>` : ''}`;
 
   function draw() {
@@ -93,9 +103,9 @@ export async function observerView(root) {
     let body = '';
     if (S.mode === 'pending') body = pending();
     else if (S.mode === 'rejected') body = rejected();
-    else {
-      body = (S.timekeeper ? timekeeper() : '') + (S.mode === 'timekeeper' ? '' : S.mode === 'scoring' ? scoring() : waiting());
-    }
+    else if (S.mode === 'coordinator') body = coordinator();
+    else if (S.mode === 'baan') body = baan();
+    else body = S.mode === 'scoring' ? scoring() : waiting();
     root.innerHTML = `<div class="obsapp">${head()}${body}</div>${S.mode === 'scoring' ? footer() : ''}`;
     scrollTo(0, y);
     tick();
@@ -112,19 +122,51 @@ export async function observerView(root) {
     return `<section class="p center" style="margin-top:14px"><h2 style="justify-content:center"><span>${last ? 'Wedstrijddag afgesloten' : 'Wachten op de start'}</span></h2>
       ${last ? '<p class="ink2">De uitslag is vergrendeld. Bedankt voor het waarnemen!</p>' : n ? `<div class="biglabel">Volgende ploeg</div><div class="nm" style="margin:4px 0">${esc(n.name)}</div>
         <div class="cd" data-cdn="${esc(n.start || '')}">--:--</div><div class="cdl">tot geplande start ${esc(n.start || '')}</div>
-        <p class="ink2" style="margin-top:16px">Zodra de jury de inzet start, verschijnt je beoordelingslijst vanzelf${S.role ? ` voor <b>${esc(S.role.name)}</b>` : ''}.</p>` : '<p class="ink2">Er komen geen ploegen meer.</p>'}</section>`;
+        <p class="ink2" style="margin-top:16px">Zodra de inzet start, verschijnt je beoordelingslijst vanzelf${S.role ? ` voor <b>${esc(S.role.name)}</b>` : ''}.</p>` : '<p class="ink2">Er komen geen ploegen meer.</p>'}</section>`;
   };
 
-  const timekeeper = () => {
-    const T = S.timekeeper.teams;
-    return `<section class="p" style="margin:14px 0"><h2><span>Tijdwaarnemer</span></h2>
-     ${T.map((t) => {
-       const f = ['plan', 'ready'].includes(t.status);
-       return `<div class="wm"><div><b>${esc(t.name)}</b><small>meld ${esc(t.meld || '–')} · start ${esc(t.start || '–')} · ${t.status === 'run' ? 'loopt' : t.status === 'wrap' ? 'afronden' : t.status === 'done' ? 'gespeeld' : t.ready_at ? 'klaar om te starten' : t.gemeld_at ? 'gemeld' : 'gepland'}</small></div>
-        ${f ? `<div class="row" style="flex-wrap:nowrap"><button class="btn sm ${t.gemeld_at ? 'ok' : ''}" data-mark="gemeld" data-tid="${t.id}" data-on="${t.gemeld_at ? 0 : 1}">${t.gemeld_at ? '✓ Gemeld' : 'Gemeld'}</button><button class="btn sm ${t.ready_at ? 'pri' : ''}" data-mark="ready" data-tid="${t.id}" data-on="${t.ready_at ? 0 : 1}">${t.ready_at ? '✓ Ready' : '⚡ Ready'}</button></div>` : ''}</div>`;
-     }).join('') || '<p class="mut">Geen ploegen.</p>'}</section>`;
-  };
+  /* ----- coördinator: ploegen aanwezig markeren op de basislocatie ----- */
+  const coordinator = () => `<section class="p" style="margin:14px 0"><h2><span>Aanwezigheid ploegen</span></h2>
+    <p class="hint" style="margin-top:0">Markeer een ploeg als aanwezig zodra die zich meldt op de basislocatie.</p>
+    ${S.teams.map((t) => {
+      const f = ['plan', 'ready'].includes(t.status);
+      const st = t.status === 'run' ? 'speelt nu' : t.status === 'wrap' ? 'afronden' : t.status === 'done' ? 'gespeeld' : t.ready_at ? 'aanwezig · klaar op de baan' : t.gemeld_at ? 'aanwezig' : 'nog niet aanwezig';
+      return `<div class="wm"><div><b>${esc(t.name)}</b><small>meld ${esc(t.meld || '–')} · start ${esc(t.start || '–')} · ${st}</small></div>
+        ${f ? `<button class="btn ${t.gemeld_at ? 'ok' : 'pri'}" data-mark="gemeld" data-tid="${t.id}" data-on="${t.gemeld_at ? 0 : 1}">${t.gemeld_at ? '✓ Aanwezig' : 'Markeer aanwezig'}</button>` : ''}</div>`;
+    }).join('') || '<p class="mut">Geen ploegen.</p>'}</section>`;
 
+  /* ----- baanleider: inzet bedienen en beoordelingen van alle functies aanpassen ----- */
+  function baan() {
+    const t = S.team, n = S.next, V = S.settings.victims || 1;
+    let card;
+    if (t) {
+      const run = t.status === 'run', rn = t.rescued_n || 0, all = rn >= V;
+      card = `<section class="p" style="margin-top:14px"><div class="row sp"><div><div class="biglabel">${run ? 'Inzet loopt' : 'Afrondtijd waarnemers'}</div><div class="nm" style="font-size:24px">${esc(t.name)}</div></div>
+        <div class="center"><div class="biglabel" data-tlabel></div><div class="mono" style="font-size:34px;color:var(--cy)" data-obs-timer>--:--</div></div></div>
+        <div class="steps" style="margin-top:10px"><div class="ok">✓ Start</div><div class="${all ? 'ok' : 'cur'}">${all ? '✓ ' : ''}Slachtoffer${V > 1 ? 's' : ''} ${V > 1 ? rn + '/' + V : ''}</div><div class="${run ? '' : 'ok'}">${run ? '' : '✓ '}Einde</div></div>
+        ${run ? `<button class="btn pri big" data-bact="rescued" data-tid="${t.id}" ${all ? 'disabled' : ''}>${all ? '✓ ' + (V > 1 ? 'Alle slachtoffers bevrijd' : 'Slachtoffer bevrijd') : V > 1 ? `Slachtoffer bevrijd (${rn + 1} van ${V})` : 'Slachtoffer bevrijd'}</button>
+          <button class="btn dng big" data-bact="end" data-tid="${t.id}">■ Einde inzet</button>
+          ${rn ? `<button class="btn sm" data-bact="unrescue" data-tid="${t.id}" style="margin-top:8px">Laatste bevrijding ongedaan maken</button>` : ''}`
+          : '<p class="ink2">De inzet is afgelopen. Beoordelingen kunnen nog aangepast worden zolang de afrondtijd loopt.</p>'}</section>`;
+    } else if (n) {
+      card = `<section class="p center" style="margin-top:14px"><h2 style="justify-content:center"><span>Volgende ploeg</span></h2><div class="nm">${esc(n.name)}</div>
+        <div class="row" style="justify-content:center;margin:8px 0"><span class="chip"><i class="dot ${n.gemeld_at ? '' : 'm'}"></i>${n.gemeld_at ? 'Aanwezig' : 'Nog niet aanwezig'}</span><span class="chip"><i class="dot ${n.ready_at ? 'w' : 'm'}"></i>${n.ready_at ? 'Klaar' : 'Niet klaar'}</span></div>
+        <div class="cd" data-cdn="${esc(n.start || '')}">--:--</div><div class="cdl">tot geplande start ${esc(n.start || '')}</div>
+        <button class="btn big ${n.ready_at ? 'ok' : ''}" data-mark="ready" data-tid="${n.id}" data-on="${n.ready_at ? 0 : 1}" style="margin-top:14px">${n.ready_at ? '✓ Ploeg is klaar op de baan' : '⚡ Ploeg is klaar op de baan'}</button>
+        <button class="btn pri big" data-bact="start" data-tid="${n.id}" data-aanwezig="${n.gemeld_at ? 1 : 0}" ${S.day.phase === 'locked' ? 'disabled' : ''}>▶ Start inzet</button></section>`;
+    } else {
+      card = '<section class="p center" style="margin-top:14px"><h2 style="justify-content:center"><span>Geen ploegen meer</span></h2><p class="ink2">Alle ploegen zijn gespeeld of vervallen.</p></section>';
+    }
+    if (!t || !S.baan.length) return card;
+    if (baanRole == null || !S.baan.some((r) => r.id === baanRole)) baanRole = S.baan[0].id;
+    const r = curRole();
+    return `${card}<section class="p" style="margin-top:14px"><h2><span>Beoordelingen aanpassen</span></h2>
+      <p class="hint" style="margin-top:0">Je kunt de beoordelingen van alle functies van de lopende ploeg wijzigen, bijvoorbeeld als een waarnemer problemen heeft. Wijzigingen worden gelogd.</p>
+      <div class="seg" style="width:100%">${S.baan.map((x) => `<button class="${x.id === r.id ? 'on' : ''}" data-brole="${x.id}">${esc(x.name)} <span class="mono">${x.done}/${x.total}</span></button>`).join('')}</div>
+      <div class="hint" style="margin:8px 0 0">${r.observer ? `<i class="dot ${r.observer.online ? '' : 'm'}" style="margin-right:6px"></i>${esc(r.observer.name)} · ${r.observer.online ? 'online' : 'offline'}` : '<span style="color:var(--bad)">Geen waarnemer gekoppeld aan deze functie</span>'}${r.finished ? ' · afgerond door waarnemer' : ''}</div></section>${list(windowOpen())}`;
+  }
+
+  /* ----- waarnemer ----- */
   function scoring() {
     const t = S.team, st = stat(), open = windowOpen();
     const its = items();
@@ -136,6 +178,7 @@ export async function observerView(root) {
       ${S.finished ? '<div class="note" style="margin-top:10px">✓ Je beoordeling is afgerond en vergrendeld.</div>' : !open ? '<div class="warn" style="margin-top:10px">Het beoordelingsvenster is gesloten. Wijzigingen zijn niet meer mogelijk.</div>' : ''}
       <div class="seg" style="margin-top:10px"><button class="${mode === 'card' ? 'on' : ''}" data-m="card">Één per scherm</button><button class="${mode === 'list' ? 'on' : ''}" data-m="list">Alles in lijst</button></div>
       ${mode === 'card' ? `<div class="dots">${dots}<button class="dotb sum ${idx === its.length ? 'cur' : ''}" data-go="${its.length}" aria-label="Overzicht">Σ</button></div>` : ''}</section>`;
+    void st;
     if (mode === 'list') return banner + list(open);
     if (idx === its.length) return banner + summary(its, open);
     return banner + card(its[idx], open, its.length);
@@ -152,7 +195,7 @@ export async function observerView(root) {
     return h;
   };
   const noteBox = (id, open) => {
-    const e = S.scores[id];
+    const e = curScores()[id];
     if (!e || !e.value) return '';
     const need = needsNote(id);
     if (!need && !(e.note || '') && !e._open) return open ? `<button class="btn sm" data-addnote="${id}" style="margin-top:6px">+ opmerking</button>` : '';
@@ -161,7 +204,7 @@ export async function observerView(root) {
 
   function card(it, open, total) {
     const id = it.id, v = val(id);
-    const need = needsNote(id), blocked = need && !noteOk(id);
+    const blocked = needsNote(id) && !noteOk(id);
     return `<section class="p" style="margin-top:14px"><div class="hint">${esc(it.cat)} · ${idx + 1} van ${total}</div><h2 style="font-size:22px;margin:4px 0 12px;letter-spacing:normal;text-transform:none;color:var(--ink)">${esc(it.name)}</h2>
       ${scaleBtns(id, open, true)}${noteBox(id, open)}
       <div class="row sp" style="margin-top:12px"><button class="btn" data-nav="-1" ${idx === 0 ? 'disabled' : ''}>← Vorige</button>
@@ -174,7 +217,7 @@ export async function observerView(root) {
       <p class="hint">Tik op een regel om een score te wijzigen.</p></section>`;
   }
   function list(open) {
-    return (S.criteria || []).map((c) => `<section class="p" style="margin-top:14px"><h2><span>${esc(c.name)}</span></h2>${c.items.map((i) => {
+    return curCriteria().map((c) => `<section class="p" style="margin-top:14px"><h2><span>${esc(c.name)}</span></h2>${c.items.map((i) => {
       const v = val(i.id);
       return `<div style="padding:10px 0;border-top:1px solid var(--line2)"><div style="font-weight:600;margin-bottom:6px">${esc(i.name)}</div><div class="row" style="gap:4px;flex-wrap:nowrap">${scaleBtns(i.id, open, false)}</div>
         <div class="hint" style="margin-top:4px">${v ? `<b>${v}</b> · ${esc(S.labels[v] || '')}` : 'nog niet beoordeeld'}</div>${noteBox(i.id, open)}</div>`;
@@ -210,31 +253,37 @@ export async function observerView(root) {
   }
 
   /* ---------- bediening ---------- */
-  const sendNote = debounce((id) => { const e = S.scores[id]; if (e && e.value && windowOpen()) enqueue({ type: 'score', team_id: S.team.id, criterion_id: +id, value: e.value, note: e.note || '' }); }, 700);
+  const sendNote = debounce((id) => {
+    const e = curScores()[id];
+    if (e && e.value && windowOpen()) enqueue({ type: 'score', team_id: S.team.id, criterion_id: +id, value: e.value, note: e.note || '', ...(S.mode === 'baan' ? { role_id: curRole().id } : {}) });
+  }, 700);
+  const baanAct = async (id, action) => { await api('POST', `/observer/team/${id}/action`, { action }, H); await load(); };
+
   root.addEventListener('click', async (e) => {
     const b = e.target.closest('button,tr[data-go]');
     if (!b) return;
     const d = b.dataset;
     try {
       if (d.leave !== undefined) {
-        if (!(await confirmBox('Afmelden', 'Je wordt afgemeld als waarnemer op dit toestel.', 'Afmelden', true))) return;
+        if (!(await confirmBox('Afmelden', 'Je wordt afgemeld op dit toestel.', 'Afmelden', true))) return;
         try { await api('POST', '/observer/leave', {}, H); } catch { /* al weg */ }
         setObserver(null); write(QK, []); go('/join'); return;
       }
       if (d.m) { mode = d.m; sessionStorage.setItem('vt_obs_mode', mode); draw(); return; }
       if (d.go !== undefined) { idx = +d.go; draw(); scrollTo(0, 0); return; }
       if (d.nav) { idx = (idx || 0) + +d.nav; draw(); scrollTo(0, 0); return; }
+      if (d.brole) { baanRole = +d.brole; draw(); return; }
       if (d.sc) {
         if (!windowOpen()) return;
-        const id = +d.sc, v = +d.v, cur = S.scores[id] || { note: '' };
-        S.scores[id] = { value: v, note: cur.note || '' };
-        enqueue({ type: 'score', team_id: S.team.id, criterion_id: id, value: v, note: cur.note || '' });
+        const id = +d.sc, v = +d.v, sc = curScores(), cur = sc[id] || { note: '' };
+        sc[id] = { value: v, note: cur.note || '' };
+        enqueue({ type: 'score', team_id: S.team.id, criterion_id: id, value: v, note: cur.note || '', ...(S.mode === 'baan' ? { role_id: curRole().id } : {}) });
         try { navigator.vibrate && navigator.vibrate(15); } catch { /* niet ondersteund */ }
         draw();
-        if (mode === 'card' && v > S.settings.noteBelow) { const at = idx; setTimeout(() => { if (idx === at && !typing(root)) { idx = at + 1; draw(); scrollTo(0, 0); } }, 320); }
+        if (S.mode === 'scoring' && mode === 'card' && v > S.settings.noteBelow) { const at = idx; setTimeout(() => { if (idx === at && !typing(root)) { idx = at + 1; draw(); scrollTo(0, 0); } }, 320); }
         return;
       }
-      if (d.addnote) { S.scores[+d.addnote]._open = true; draw(); const ta = $(`[data-note="${d.addnote}"]`, root); if (ta) ta.focus(); return; }
+      if (d.addnote) { curScores()[+d.addnote]._open = true; draw(); const ta = $(`[data-note="${d.addnote}"]`, root); if (ta) ta.focus(); return; }
       if (d.finish !== undefined) {
         if (!(await confirmBox('Beoordeling afronden', 'Na afronden kun je je scores niet meer wijzigen.', 'Afronden'))) return;
         S.finished = true; enqueue({ type: 'finish', team_id: S.team.id }); draw(); return;
@@ -242,17 +291,29 @@ export async function observerView(root) {
       if (d.mark) {
         await api('POST', `/observer/team/${d.tid}/mark`, { what: d.mark, on: d.on === '1' }, H); await load(); return;
       }
+      if (d.bact) {
+        const a = d.bact;
+        if (a === 'start') {
+          const warn = d.aanwezig === '0' ? ' Let op: deze ploeg is nog niet als aanwezig gemarkeerd.' : '';
+          if (!(await confirmBox('Start inzet', `De klok loopt direct en de beoordeling opent voor alle waarnemers.${warn}`, 'Start inzet'))) return;
+        }
+        if (a === 'end' && !(await confirmBox('Einde inzet', `De speeltijd stopt nu en de waarnemers krijgen ${S.settings.wrapMin} minuten om af te ronden.`, 'Einde inzet', true))) return;
+        if (a === 'unrescue' && !(await confirmBox('Ongedaan maken', 'De laatste bevrijding wordt teruggedraaid.', 'Ongedaan maken'))) return;
+        await baanAct(d.tid, a);
+        try { navigator.vibrate && navigator.vibrate(30); } catch { /* niet ondersteund */ }
+        return;
+      }
     } catch (err) { fail(err); }
   });
   root.addEventListener('input', (e) => {
     const ta = e.target.closest('[data-note]');
     if (!ta) return;
-    const id = +ta.dataset.note;
-    if (!S.scores[id]) return;
-    S.scores[id].note = ta.value;
+    const id = +ta.dataset.note, sc = curScores();
+    if (!sc[id]) return;
+    sc[id].note = ta.value;
     ta.classList.toggle('bad', needsNote(id) && !ta.value.trim());
     sendNote(id);
-    const f = $('.obsfoot', root); if (f) f.outerHTML = footer();
+    if (S.mode === 'scoring') { const f = $('.obsfoot', root); if (f) f.outerHTML = footer(); }
     const nb = root.querySelector('[data-nav="1"]'); if (nb) nb.disabled = !(val(id) && noteOk(id));
   });
 
@@ -265,6 +326,6 @@ export async function observerView(root) {
   window.addEventListener('offline', () => { online = false; if (S) draw(); });
 
   await load();
-  void ask; void clockOf;
+  void clockOf;
   return () => { closeSse(); timers.forEach(clearInterval); window.removeEventListener('online', onOnline); };
 }

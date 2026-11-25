@@ -75,12 +75,13 @@ await new Client().post('/join', { code: 'XXXXXX', name: 'Kees' }, 404);
 cfg = await admin.get(`/days/${dayId}/config`);
 const code = cfg.day.join_code;
 const roles = cfg.roles;
-const names = ['Kees', 'Anouk', 'Mo', 'Sander', 'Roos'];
+const names = ['Kees', 'Anouk', 'Mo', 'Sander', 'Roos', 'Piet'];
 const obs = [];
 for (const n of names) {
   const r = await new Client().post('/join', { code: code.toLowerCase(), name: n });
   obs.push({ name: n, c: new Client(r.token), id: r.observer.id });
 }
+let r0;
 let st = await obs[0].c.get('/observer/state');
 assert.equal(st.mode, 'pending');
 ok('waarnemers melden zich aan met de dagcode en wachten op koppeling');
@@ -91,7 +92,8 @@ assert.ok((await qr.text()).includes('<svg'));
 ok('QR-code wordt als SVG geleverd');
 
 for (let i = 0; i < 4; i++) await jury.post(`/observers/${obs[i].id}/link`, { role_id: roles[i].id });
-await jury.post(`/observers/${obs[4].id}/link`, { timekeeper: true });
+await jury.post(`/observers/${obs[4].id}/link`, { staff: 'coordinator' });
+await jury.post(`/observers/${obs[5].id}/link`, { staff: 'baanleider' });
 await jury.post(`/observers/${obs[4].id}/link`, { role_id: roles[0].id }, 409);
 ok('functies gekoppeld; dezelfde functie twee keer wordt geweigerd');
 st = await obs[0].c.get('/observer/state');
@@ -99,8 +101,9 @@ assert.equal(st.mode, 'wait');
 assert.equal(st.criteria.flatMap((c) => c.items).length, 17);
 assert.equal((await obs[1].c.get('/observer/state')).criteria.flatMap((c) => c.items).length, 12);
 ok('waarnemer ziet alleen de criteria van de eigen functie (17 voor bevelvoerder, 12 voor 1 en 2)');
-const tkState = await obs[4].c.get('/observer/state');
-assert.equal(tkState.mode, 'timekeeper');
+assert.equal((await obs[4].c.get('/observer/state')).mode, 'coordinator');
+assert.equal((await obs[5].c.get('/observer/state')).mode, 'baan');
+ok('coördinator en baanleider krijgen hun eigen scherm');
 
 console.log('Inzet starten en beoordelen');
 const t1 = teamIds[0];
@@ -108,11 +111,16 @@ const items0 = st.criteria.flatMap((c) => c.items);
 await obs[0].c.put('/observer/score', { team_id: t1, criterion_id: items0[0].id, value: 8, ts: Date.now() }, 200)
   .then((r) => assert.equal(r.results[0].ok, false));
 ok('vóór de start worden scores geweigerd');
-await obs[4].c.post(`/observer/team/${t1}/mark`, { what: 'ready' });
-await obs[0].c.post(`/observer/team/${t1}/mark`, { what: 'ready' }, 403);
-await jury.post(`/teams/${t1}/action`, { action: 'start' });
+await obs[4].c.post(`/observer/team/${t1}/mark`, { what: 'gemeld' });
+await obs[4].c.post(`/observer/team/${t1}/mark`, { what: 'ready' }, 403);
+await obs[4].c.post(`/observer/team/${t1}/action`, { action: 'start' }, 403);
+await obs[0].c.post(`/observer/team/${t1}/mark`, { what: 'gemeld' }, 403);
+ok('coördinator markeert aanwezig maar mag niet starten; gewone waarnemer mag niets markeren');
+await obs[5].c.post(`/observer/team/${t1}/mark`, { what: 'ready' });
+await obs[5].c.post(`/observer/team/${t1}/action`, { action: 'abort', reason: 'test' }, 403);
+await obs[5].c.post(`/observer/team/${t1}/action`, { action: 'start' });
 await jury.post(`/teams/${teamIds[1]}/action`, { action: 'start' }, 409);
-ok('tijdwaarnemer markeert ready; tweede inzet tegelijk wordt geweigerd');
+ok('baanleider markeert ready en start de inzet; tweede inzet tegelijk wordt geweigerd; afbreken mag alleen de jury');
 
 // iedere waarnemer vult alle criteria in (met een 5 bij de eerste van de chauffeur)
 const scoreAll = async (o, teamId, val, ts) => {
@@ -131,6 +139,19 @@ let js = await jury.get(`/days/${dayId}/state`);
 assert.equal(js.activeTeamId, t1);
 assert.deepEqual(js.observers.find((o) => o.name === 'Kees').progress, { done: 17, total: 17, notesMissing: 0, finished: false });
 ok('alle 53 beoordelingen worden opgeslagen; jury ziet de voortgang');
+
+const bs = await obs[5].c.get('/observer/state');
+assert.equal(bs.baan.length, 4);
+const chfRole = bs.baan.find((r) => r.name === 'Chauffeur');
+assert.equal(chfRole.done, 12);
+const chfItem = chfRole.criteria[0].items[0];
+r0 = await obs[5].c.put('/observer/score', { team_id: t1, criterion_id: chfItem.id, role_id: chfRole.id, value: 7, note: '', ts: Date.now() });
+assert.equal(r0.results[0].ok, true);
+assert.ok((await jury.get(`/days/${dayId}/state`)).events.some((e) => e.kind === 'BAANLEIDER'));
+r0 = await obs[5].c.post('/observer/finish', { team_id: t1, role_id: chfRole.id });
+assert.equal(r0.results[0].ok, false);
+await obs[0].c.put('/observer/score', { team_id: t1, criterion_id: items0[0].id, value: 8, ts: Date.now() });
+ok('baanleider ziet alle functies en kan een beoordeling van een andere functie wijzigen (wordt gelogd)');
 
 // 4 of 5 vraagt toelichting bij afronden
 const chf = obs[3];
@@ -248,6 +269,28 @@ assert.ok((await csv.text()).includes('Post 1'));
 const sheet = await jury.get(`/teams/${t1}/sheet`);
 assert.equal(sheet.corrections.length, 1);
 ok('vergrendelde dag weigert scores; CSV-export en scoreblad werken');
+
+console.log('Meerdere slachtoffers');
+const d3 = await admin.post('/days', { title: 'Drie slachtoffers', victims: 3 });
+assert.equal((await admin.get(`/days/${d3.id}/config`)).settings.victims, 3);
+const tm3 = (await admin.post(`/days/${d3.id}/teams`, { name: 'Post A', meld: '09:00', start: '09:20' })).id;
+await admin.patch(`/days/${d3.id}`, { settings: { victims: 2 } });
+await admin.post(`/teams/${tm3}/action`, { action: 'start' });
+await admin.patch(`/days/${d3.id}`, { settings: { victims: 1 } }, 409);
+await admin.post(`/teams/${tm3}/action`, { action: 'rescued' });
+let s3 = (await admin.get(`/days/${d3.id}/state`)).teams[0];
+assert.equal(s3.rescued_n, 1);
+assert.equal(s3.rescued_at, null);
+await admin.post(`/teams/${tm3}/action`, { action: 'unrescue' });
+await admin.post(`/teams/${tm3}/action`, { action: 'rescued' });
+await admin.post(`/teams/${tm3}/action`, { action: 'rescued' });
+await admin.post(`/teams/${tm3}/action`, { action: 'rescued' }, 409);
+s3 = (await admin.get(`/days/${d3.id}/state`)).teams[0];
+assert.equal(s3.rescued_n, 2);
+assert.ok(s3.rescued_at);
+assert.equal(s3.rescues.length, 2);
+ok('meerdere slachtoffers: redtijd pas bepaald na het laatste slachtoffer; ongedaan maken werkt; aantal vergrendelt na de start');
+await admin.del(`/days/${d3.id}`);
 
 await admin.del(`/teams/${t1}`, 409);
 await admin.del(`/days/${other.id}`);

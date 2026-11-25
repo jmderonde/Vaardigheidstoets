@@ -71,7 +71,7 @@ export async function daysView(root) {
     root.innerHTML = `${header(me)}<div style="max-width:900px;margin:0 auto">
      ${me.role === 'admin' ? `<section class="p" style="margin-bottom:14px"><h2><span>Nieuwe wedstrijddag</span></h2>
        <form id="nf" class="fg"><label class="f">Naam<input name="title" required placeholder="Vaardigheidstoets 2026"></label><label class="f">Datum<input name="date" type="date"></label>
-       <label class="f">Organiserende post<input name="place"></label><div style="align-self:end"><button class="btn pri">Aanmaken</button></div></form></section>` : ''}
+       <label class="f">Organiserende post<input name="place"></label><label class="f">Aantal slachtoffers<input name="victims" type="number" min="1" max="10" value="1"></label><div style="align-self:end"><button class="btn pri">Aanmaken</button></div></form></section>` : ''}
      <section class="p"><h2><span>Wedstrijddagen</span></h2>
       ${days.length ? `<table><thead><tr><th>Naam</th><th>Datum</th><th>Ploegen</th><th>Status</th><th></th></tr></thead><tbody>${days.map((d) => `<tr>
         <td><b>${esc(d.title)}</b><div class="hint">${esc(d.place || '')}</div></td><td class="mono">${esc(d.date || '–')}</td><td class="mono">${d.teams}</td><td>${phase[d.phase] || d.phase}</td>

@@ -35,9 +35,10 @@ export async function setupView(root, [dayId]) {
       <label class="f">Maximale redtijd (min)<input name="maxRedMin" type="number" min="1" step="0.5" value="${s.maxRedMin}"></label>
       <label class="f">Punten per resterende minuut<input name="bonusPerMin" type="number" min="0" step="0.5" value="${s.bonusPerMin}"></label>
       <label class="f">Afronding resterende tijd<select name="rounding"><option value="floor" ${s.rounding === 'floor' ? 'selected' : ''}>Hele minuten (naar beneden)</option><option value="round" ${s.rounding === 'round' ? 'selected' : ''}>Hele minuten (afronden)</option><option value="exact" ${s.rounding === 'exact' ? 'selected' : ''}>Exact (2 decimalen)</option></select></label>
+      <label class="f">Aantal slachtoffers<input name="victims" type="number" min="1" max="10" value="${s.victims || 1}" ${started() ? 'disabled' : ''}></label>
       <label class="f">Afrondtijd waarnemers (min)<input name="wrapMin" type="number" min="0" max="60" value="${s.wrapMin}"></label>
       <label class="f">Toelichting verplicht bij score t/m<input name="noteBelow" type="number" min="0" max="10" value="${s.noteBelow}"></label></div>
-      <p class="hint">Bonus = resterende minuten × punten per minuut, nooit lager dan 0. Bij gelijke stand wint de minste speeltijd. Een volgende inzet kan pas starten als de afrondtijd van de vorige voorbij is.</p>
+      <p class="hint">Meerdere slachtoffers: de redtijd loopt tot het <b>laatste</b> slachtoffer bevrijd is. Het aantal staat vast zodra de eerste inzet start. Bonus = resterende minuten × punten per minuut, nooit lager dan 0. Bij gelijke stand wint de minste speeltijd. Een volgende inzet kan pas starten als de afrondtijd van de vorige voorbij is.</p>
       <button class="btn pri">Opslaan</button></form></section>
      <section class="p" style="margin-top:14px"><h2><span>Gevaarlijke zone</span></h2><button class="btn dng" id="del">Wedstrijddag verwijderen</button><p class="hint">Verwijdert ook alle ploegen, scores en aanmeldingen. Dit kan niet ongedaan gemaakt worden.</p></section>`;
   };
@@ -73,7 +74,7 @@ export async function setupView(root, [dayId]) {
 
   /* ----- toegang ----- */
   const toegang = () => `<div class="grid"><section class="p c6"><h2><span>Waarnemers aanmelden</span></h2>
-     <p class="ink2" style="margin-top:0">Waarnemers gaan op hun telefoon naar <b>${esc(location.host)}/join</b> en vullen de code in, of scannen de QR-code. Daarna koppelt de jury ze aan een functie.</p>
+     <p class="ink2" style="margin-top:0">Waarnemers, de coördinator (aanwezigheid op de basislocatie) en de baanleider (inzet bedienen) gaan op hun telefoon naar <b>${esc(location.host)}/join</b> en vullen de code in, of scannen de QR-code. Daarna koppelt de jury ze aan een functie.</p>
      <div class="code" id="jc">${esc(cfg.day.join_code)}</div>
      <div style="margin:14px 0"><span class="qr"><img src="/api/days/${dayId}/qr.svg?v=${esc(cfg.day.join_code)}" alt="QR-code om aan te melden"></span></div>
      <div class="row"><button class="btn sm" id="cpj">Link kopiëren</button><button class="btn sm" id="prn">Afdrukken</button><button class="btn sm dng" id="rgn">Nieuwe code</button></div>
@@ -89,7 +90,7 @@ export async function setupView(root, [dayId]) {
         e.preventDefault();
         const f = Object.fromEntries(new FormData(e.target));
         await api('PATCH', `/days/${dayId}`, { title: f.title, date: f.date, place: f.place, trophy: f.trophy,
-          settings: { maxSpeelMin: f.maxSpeelMin, maxRedMin: f.maxRedMin, bonusPerMin: f.bonusPerMin, rounding: f.rounding, wrapMin: f.wrapMin, noteBelow: f.noteBelow } });
+          settings: { maxSpeelMin: f.maxSpeelMin, maxRedMin: f.maxRedMin, bonusPerMin: f.bonusPerMin, rounding: f.rounding, wrapMin: f.wrapMin, noteBelow: f.noteBelow, victims: f.victims } });
         toast('Opgeslagen', 'ok'); await reload();
       });
       $('#del', root).onclick = act(async () => {

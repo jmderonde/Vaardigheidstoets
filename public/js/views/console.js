@@ -66,10 +66,10 @@ export async function consoleView(root, [dayId, tabParam]) {
     const outs = S.teams.filter((t) => t.status === 'out');
     const locked = S.day.phase === 'locked';
     const liveControls = a ? (a.status === 'run'
-      ? `<div class="btns co"><button class="btn" data-a="rescued" data-tid="${a.id}" ${a.rescued_at ? 'disabled' : ''}>${a.rescued_at ? '✓ Slachtoffer gered ' + fmtMs(a.rescued_at - a.started_at) : 'Slachtoffer gered'}</button><button class="btn dng" data-a="end" data-tid="${a.id}">■ Einde inzet</button><button class="btn" data-a="abort" data-tid="${a.id}">⚠ Afbreken</button></div>`
+      ? `<div class="btns co"><button class="btn" data-a="rescued" data-tid="${a.id}" ${a.rescued_at ? 'disabled' : ''}>${a.rescued_at ? '✓ ' + (a.victims > 1 ? 'Alle slachtoffers gered ' : 'Slachtoffer gered ') + fmtMs(a.rescued_at - a.started_at) : a.victims > 1 ? `Slachtoffer gered (${a.rescued_n + 1} van ${a.victims})` : 'Slachtoffer gered'}</button>${a.rescued_n ? `<button class="btn sm" data-a="unrescue" data-tid="${a.id}" title="Laatste redding ongedaan maken">↶ Ongedaan</button>` : ''}<button class="btn dng" data-a="end" data-tid="${a.id}">■ Einde inzet</button><button class="btn" data-a="abort" data-tid="${a.id}">⚠ Afbreken</button></div>`
       : `<div class="btns co"><button class="btn" data-a="lock" data-tid="${a.id}">🔒 Beoordeling nu vergrendelen</button><button class="btn" data-a="abort" data-tid="${a.id}">⚠ Afbreken</button></div>`) : '';
     const nextControls = next ? `<div class="btns co" style="margin-top:10px">
-      <button class="btn sm" data-a="gemeld" data-tid="${next.id}" data-on="${next.gemeld_at ? 0 : 1}">${next.gemeld_at ? '✓ Gemeld' : 'Markeer gemeld'}</button>
+      <button class="btn sm" data-a="gemeld" data-tid="${next.id}" data-on="${next.gemeld_at ? 0 : 1}">${next.gemeld_at ? '✓ Aanwezig' : 'Markeer aanwezig'}</button>
       <button class="btn sm" data-a="ready" data-tid="${next.id}" data-on="${next.ready_at ? 0 : 1}">${next.ready_at ? '✓ Ready' : '⚡ Markeer ready'}</button>
       <button class="btn pri" data-a="start" data-tid="${next.id}" ${a || locked ? 'disabled' : ''}>▶ Start inzet</button></div>
       ${a ? `<p class="hint co" style="margin:6px 0 0">Starten kan pas als ${esc(a.name)} klaar is, inclusief afrondtijd van de waarnemers.</p>` : ''}` : '';
@@ -84,8 +84,8 @@ export async function consoleView(root, [dayId, tabParam]) {
     const doneN = S.teams.filter((t) => t.status === 'done').length, runN = a ? 1 : 0, goN = S.teams.filter(P.isFuture).length;
     const view = S.teams.map((t) => (t.status === 'done' ? t : { ...t, total: null, rank: null }));
     const pend = S.observers.filter((o) => o.status === 'pending');
-    const roleOpts = (o) => [['', '— kies functie —'], ...S.roles.map((r) => [r.id, r.name]), ['T', 'Tijdwaarnemer']]
-      .map(([v, l]) => `<option value="${v}" ${(o.timekeeper && !o.role_id ? 'T' : o.role_id || '') == v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    const roleOpts = (o) => [['', '— kies functie —'], ...S.roles.map((r) => [r.id, r.name]), ['C', 'Coördinator (aanwezig)'], ['B', 'Baanleider (inzet)']]
+      .map(([v, l]) => `<option value="${v}" ${(o.staff === 'coordinator' ? 'C' : o.staff === 'baanleider' ? 'B' : o.role_id || '') == v ? 'selected' : ''}>${esc(l)}</option>`).join('');
     const obsRow = (o) => `<div class="wm ${o.status === 'pending' ? 'pend' : ''}"><div><b><i class="dot ${o.online ? '' : 'm'}" style="margin-right:6px"></i>${esc(o.name)}</b><small>${o.status === 'pending' ? 'wacht op koppeling' : o.online ? 'online' : 'offline'}</small></div>
       <div class="row" style="flex-wrap:nowrap"><select data-link="${o.id}" style="width:160px" aria-label="Functie van ${esc(o.name)}">${roleOpts(o)}</select><button class="btn sm" data-rej="${o.id}" title="Weigeren of verwijderen" aria-label="Weigeren">✕</button></div></div>`;
     return `<div class="grid">
@@ -264,7 +264,7 @@ export async function consoleView(root, [dayId, tabParam]) {
     const el = e.target;
     if (el.dataset.link) {
       const v = el.value;
-      try { await post(`/observers/${el.dataset.link}/link`, { role_id: v === '' || v === 'T' ? null : +v, timekeeper: v === 'T' }); } catch (err) { fail(err); }
+      try { await post(`/observers/${el.dataset.link}/link`, { role_id: ['', 'C', 'B'].includes(v) ? null : +v, staff: v === 'C' ? 'coordinator' : v === 'B' ? 'baanleider' : null }); } catch (err) { fail(err); }
       await refresh(); return;
     }
     if (el.id === 'sheetSel') { sheetTeam = +el.value; drawSheet(); return; }

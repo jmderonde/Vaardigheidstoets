@@ -5,6 +5,7 @@ import { ah, bad, int, rid, str } from '../util.js';
 import { loadConfig, logEvent, parseSettings, SC_MAX, SC_MIN, teamStatus } from '../logic.js';
 import { emit, subscribe } from '../hub.js';
 import { observerState } from '../state.js';
+import { BAAN_ACTIONS, performTeamAction } from '../actions.js';
 
 export const observerRouter = Router();
 
@@ -46,7 +47,7 @@ observerRouter.get('/observer/state', obsAuth, ah(async (req, res) => {
 }));
 observerRouter.get('/observer/stream', obsAuth, (req, res) => subscribe(req.obs.day_id, req, res));
 observerRouter.post('/observer/leave', obsAuth, ah(async (req, res) => {
-  await run('UPDATE observers SET status=\'rejected\',role_id=NULL,timekeeper=0 WHERE id=?', [req.obs.id]);
+  await run('UPDATE observers SET status=\'rejected\',role_id=NULL,timekeeper=0,staff=NULL WHERE id=?', [req.obs.id]);
   await logEvent(req.obs.day_id, 'AANMELDING', 'w', `${req.obs.name} heeft zich afgemeld`);
   emit(req.obs.day_id);
   res.json({ ok: true });
@@ -68,35 +69,44 @@ async function applyItem(obs, item, ctx) {
   const teamId = int(item.team_id);
   const t = await get('SELECT * FROM teams WHERE id=? AND day_id=?', [teamId, obs.day_id]);
   if (!t) return { ok: false, reason: 'unknown_team' };
-  const day = ctx.day;
-  if (day.phase === 'locked') return { ok: false, reason: 'day_locked' };
-  if (obs.status !== 'linked' || !obs.role_id) return { ok: false, reason: 'not_linked' };
+  if (ctx.day.phase === 'locked') return { ok: false, reason: 'day_locked' };
+  // Een baanleider mag de beoordelingen van alle functies aanpassen; een waarnemer alleen die van de eigen functie.
+  const isBaan = obs.status === 'linked' && obs.staff === 'baanleider';
+  const roleId = isBaan ? int(item.role_id) : obs.role_id;
+  if (obs.status !== 'linked' || !roleId) return { ok: false, reason: 'not_linked' };
+  const role = ctx.cfg.roles.find((r) => r.id === roleId);
+  if (!role) return { ok: false, reason: 'unknown_role' };
   if (!windowOpen(t, ctx.settings, Number(item.ts) || now, now)) return { ok: false, reason: 'closed' };
-  const fin = await get('SELECT 1 AS x FROM finals WHERE team_id=? AND role_id=?', [t.id, obs.role_id]);
+  const fin = isBaan ? null : await get('SELECT 1 AS x FROM finals WHERE team_id=? AND role_id=?', [t.id, roleId]);
 
   if (item.type === 'finish') {
+    if (isBaan) return { ok: false, reason: 'not_allowed' };
     if (fin) return { ok: true, already: true };
-    const items = ctx.cfg.categories.flatMap((c) => c.items.filter((i) => i.roles.includes(obs.role_id)));
-    const mine = await all('SELECT criterion_id,value,note FROM scores WHERE team_id=? AND role_id=?', [t.id, obs.role_id]);
+    const items = ctx.cfg.categories.flatMap((c) => c.items.filter((i) => i.roles.includes(roleId)));
+    const mine = await all('SELECT criterion_id,value,note FROM scores WHERE team_id=? AND role_id=?', [t.id, roleId]);
     const m = new Map(mine.map((x) => [x.criterion_id, x]));
     for (const i of items) {
       const e = m.get(i.id);
       if (!e || !e.value) return { ok: false, reason: 'incomplete' };
       if (e.value <= ctx.settings.noteBelow && !(e.note || '').trim()) return { ok: false, reason: 'note_missing' };
     }
-    await run('INSERT OR IGNORE INTO finals(team_id,role_id,at) VALUES(?,?,?)', [t.id, obs.role_id, now]);
+    await run('INSERT OR IGNORE INTO finals(team_id,role_id,at) VALUES(?,?,?)', [t.id, roleId, now]);
     return { ok: true, finished: true };
   }
 
   if (fin) return { ok: false, reason: 'finished' };
   const criterionId = int(item.criterion_id), value = int(item.value);
   if (value == null || value < SC_MIN || value > SC_MAX) return { ok: false, reason: 'bad_value' };
-  const applies = ctx.cfg.categories.some((c) => c.items.some((i) => i.id === criterionId && i.roles.includes(obs.role_id)));
-  if (!applies) return { ok: false, reason: 'not_applicable' };
+  const crit = ctx.cfg.categories.flatMap((c) => c.items).find((i) => i.id === criterionId && i.roles.includes(roleId));
+  if (!crit) return { ok: false, reason: 'not_applicable' };
+  const old = isBaan ? await get('SELECT value FROM scores WHERE team_id=? AND criterion_id=? AND role_id=?', [t.id, criterionId, roleId]) : null;
   await run(
     `INSERT INTO scores(team_id,criterion_id,role_id,value,note,observer_id,updated_at) VALUES(?,?,?,?,?,?,?)
      ON CONFLICT(team_id,criterion_id,role_id) DO UPDATE SET value=excluded.value,note=excluded.note,observer_id=excluded.observer_id,updated_at=excluded.updated_at`,
-    [t.id, criterionId, obs.role_id, value, str(item.note, 500), obs.id, now]);
+    [t.id, criterionId, roleId, value, str(item.note, 500), obs.id, now]);
+  if (isBaan && old && old.value !== value) {
+    await logEvent(t.day_id, 'BAANLEIDER', 'v', `${obs.name} (baanleider) wijzigde ${role.name} · ${crit.name}: ${old.value} → ${value} · ${t.name}`);
+  }
   return { ok: true };
 }
 
@@ -122,21 +132,26 @@ observerRouter.post('/observer/sync', obsAuth, ah(async (req, res) => {
   await handleItems(req, res, req.body.items);
 }));
 
-/* ---------- tijdwaarnemer: gemeld / klaar om te starten ---------- */
+/* ---------- coördinator (aanwezig) en baanleider (ready, start, slachtoffers, einde) ---------- */
+const staffOf = (o) => (o.status === 'linked' ? o.staff : null);
+
 observerRouter.post('/observer/team/:id/mark', obsAuth, ah(async (req, res) => {
-  if (!req.obs.timekeeper || req.obs.status !== 'linked') bad('Alleen de tijdwaarnemer mag dit.', 403);
+  const staff = staffOf(req.obs);
+  if (!staff) bad('Alleen de coördinator of baanleider mag dit.', 403);
   const t = await get('SELECT * FROM teams WHERE id=? AND day_id=?', [int(req.params.id), req.obs.day_id]);
   if (!t) bad('Ploeg niet gevonden', 404);
-  const cfg = await loadConfig(req.obs.day_id);
-  if (!['plan', 'ready'].includes(teamStatus(t, Date.now(), cfg.settings))) bad('Deze ploeg kan niet meer gemarkeerd worden.', 409);
-  const on = req.body.on !== false;
-  if (req.body.what === 'gemeld') {
-    await run('UPDATE teams SET gemeld_at=? WHERE id=?', [on ? Date.now() : null, t.id]);
-    await logEvent(t.day_id, 'GEMELD', 'i', on ? `${t.name} heeft zich gemeld · ${req.obs.name} (tijdwaarnemer)` : `${t.name}: melding ingetrokken · ${req.obs.name}`);
-  } else if (req.body.what === 'ready') {
-    await run('UPDATE teams SET ready_at=?,ready_by=?,gemeld_at=COALESCE(gemeld_at,?) WHERE id=?', [on ? Date.now() : null, on ? `${req.obs.name} (tijdwaarnemer)` : null, on ? Date.now() : null, t.id]);
-    await logEvent(t.day_id, 'READY', 'i', on ? `${t.name} klaar om te starten · ${req.obs.name} (tijdwaarnemer)` : `${t.name}: ready ingetrokken · ${req.obs.name}`);
-  } else bad('Onbekende actie');
+  const what = req.body.what === 'ready' ? 'ready' : 'gemeld';
+  if (what === 'ready' && staff !== 'baanleider') bad('Alleen de baanleider markeert een ploeg als klaar om te starten.', 403);
+  await performTeamAction(t, what, { on: req.body.on !== false }, `${req.obs.name} (${staff === 'baanleider' ? 'baanleider' : 'coördinator'})`);
+  emit(t.day_id);
+  res.json({ ok: true });
+}));
+
+observerRouter.post('/observer/team/:id/action', obsAuth, ah(async (req, res) => {
+  if (staffOf(req.obs) !== 'baanleider') bad('Alleen de baanleider mag de inzet bedienen.', 403);
+  const t = await get('SELECT * FROM teams WHERE id=? AND day_id=?', [int(req.params.id), req.obs.day_id]);
+  if (!t) bad('Ploeg niet gevonden', 404);
+  await performTeamAction(t, String(req.body.action || ''), { on: req.body.on !== false }, `${req.obs.name} (baanleider)`, BAAN_ACTIONS);
   emit(t.day_id);
   res.json({ ok: true });
 }));

@@ -6,6 +6,7 @@ import { cellsOf, computeResults, loadConfig, loadFinals, loadScores, logEvent, 
 import { emit, subscribe } from '../hub.js';
 import { juryState, teamSheet } from '../state.js';
 import { loadTeam } from './admin.js';
+import { fmtMs, performTeamAction } from '../actions.js';
 
 export const juryRouter = Router();
 const who = (req) => req.user.name || req.user.email;
@@ -20,93 +21,10 @@ juryRouter.get('/days/:dayId/stream', dayAccess, (req, res) => subscribe(req.day
 /* ---------- regie van de inzet ---------- */
 juryRouter.post('/teams/:id/action', requireUser, loadTeam, ah(async (req, res) => {
   const t = req.team;
-  const action = String(req.body.action || '');
-  const reason = str(req.body.reason, 300);
-  const cfg = await loadConfig(t.day_id);
-  const s = cfg.settings;
-  const now = Date.now();
-  const st = teamStatus(t, now, s);
-  const log = (kind, tone, text) => logEvent(t.day_id, kind, tone, `${text} · ${who(req)}`);
-  if (cfg.day.phase === 'locked' && !['restore'].includes(action)) bad('De uitslag is vergrendeld. Ontgrendel eerst de wedstrijddag.', 409);
-
-  switch (action) {
-    case 'gemeld': {
-      if (!['plan', 'ready'].includes(st)) bad('Deze ploeg kan zich niet meer melden.', 409);
-      const on = req.body.on !== false;
-      await run('UPDATE teams SET gemeld_at=? WHERE id=?', [on ? now : null, t.id]);
-      await log('GEMELD', 'i', on ? `${t.name} heeft zich gemeld` : `${t.name}: melding ingetrokken`);
-      break;
-    }
-    case 'ready': {
-      if (!['plan', 'ready'].includes(st)) bad('Deze ploeg kan niet meer op ready gezet worden.', 409);
-      const on = req.body.on !== false;
-      await run('UPDATE teams SET ready_at=?,ready_by=?,gemeld_at=COALESCE(gemeld_at,?) WHERE id=?', [on ? now : null, on ? `jury: ${who(req)}` : null, on ? now : null, t.id]);
-      await log('READY', 'i', on ? `${t.name} klaar om te starten` : `${t.name}: ready ingetrokken`);
-      break;
-    }
-    case 'start': {
-      if (!['plan', 'ready'].includes(st)) bad('Deze ploeg kan niet gestart worden.', 409);
-      const other = cfg.teams.find((x) => x.id !== t.id && ['run', 'wrap'].includes(teamStatus(x, now, s)));
-      if (other) {
-        const os = teamStatus(other, now, s);
-        bad(os === 'run' ? `${other.name} is nog bezig.` : `De waarnemers van ${other.name} hebben nog afrondtijd tot ${new Date(other.ended_at + s.wrapMin * 60000).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Europe/Amsterdam' })}.`, 409);
-      }
-      await run('UPDATE teams SET started_at=?,rescued_at=NULL,ended_at=NULL,locked=0 WHERE id=?', [now, t.id]);
-      if (cfg.day.phase === 'prep') await run('UPDATE days SET phase=\'active\' WHERE id=?', [t.day_id]);
-      await log('START', 'i', `Inzet ${t.name} gestart`);
-      break;
-    }
-    case 'rescued': {
-      if (st !== 'run') bad('De inzet loopt niet.', 409);
-      if (t.rescued_at) bad('Het slachtoffer is al als gered gemarkeerd.', 409);
-      await run('UPDATE teams SET rescued_at=? WHERE id=?', [now, t.id]);
-      await log('GERED', 'o', `Slachtoffer gered · redtijd ${fmtMs(now - t.started_at)}`);
-      break;
-    }
-    case 'end': {
-      if (st !== 'run') bad('De inzet loopt niet.', 409);
-      await run('UPDATE teams SET ended_at=? WHERE id=?', [now, t.id]);
-      await log('EINDE', 'i', `Einde inzet ${t.name} · speeltijd ${fmtMs(now - t.started_at)} · ${s.wrapMin} min afrondtijd${t.rescued_at ? '' : ' · slachtoffer niet als gered gemarkeerd'}`);
-      break;
-    }
-    case 'lock': {
-      if (st !== 'wrap') bad('Alleen een ploeg in afrondtijd kan voortijdig vergrendeld worden.', 409);
-      await run('UPDATE teams SET locked=1 WHERE id=?', [t.id]);
-      await log('SLOT', 'o', `Beoordeling ${t.name} vergrendeld`);
-      break;
-    }
-    case 'abort': {
-      if (!['run', 'wrap', 'done'].includes(st)) bad('Er is niets af te breken.', 409);
-      if (reason.length < 3) bad('Geef een reden voor het afbreken.');
-      await run('DELETE FROM scores WHERE team_id=?', [t.id]);
-      await run('DELETE FROM finals WHERE team_id=?', [t.id]);
-      await run('UPDATE teams SET started_at=NULL,rescued_at=NULL,ended_at=NULL,locked=0 WHERE id=?', [t.id]);
-      await log('AFGEBROKEN', 'x', `Inzet ${t.name} afgebroken, tijden en scores gewist · “${reason}”`);
-      break;
-    }
-    case 'out': {
-      if (!['plan', 'ready'].includes(st)) bad('Alleen een ploeg die nog niet gestart is kan vervallen.', 409);
-      if (reason.length < 3) bad('Geef een reden waarom de ploeg vervalt.');
-      await run('UPDATE teams SET out=1,out_reason=?,ready_at=NULL WHERE id=?', [reason, t.id]);
-      await log('VERVALLEN', 'x', `${t.name} vervalt · “${reason}”`);
-      break;
-    }
-    case 'restore': {
-      if (st !== 'out') bad('Deze ploeg is niet vervallen.', 409);
-      await run('UPDATE teams SET out=0,out_reason=NULL WHERE id=?', [t.id]);
-      await log('PLANNING', 'v', `${t.name} weer in de planning opgenomen`);
-      break;
-    }
-    default: bad('Onbekende actie');
-  }
+  await performTeamAction(t, String(req.body.action || ''), { reason: str(req.body.reason, 300), on: req.body.on !== false }, who(req));
   emit(t.day_id);
   res.json({ ok: true });
 }));
-
-function fmtMs(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-}
 
 /* ---------- planning ---------- */
 juryRouter.post('/days/:dayId/shift', dayAccess, ah(async (req, res) => {
@@ -153,24 +71,26 @@ async function loadObserver(req, res, next) {
 juryRouter.post('/observers/:id/link', requireUser, loadObserver, ah(async (req, res) => {
   const o = req.obs;
   const roleId = req.body.role_id == null || req.body.role_id === '' ? null : int(req.body.role_id);
-  const timekeeper = !!req.body.timekeeper;
+  let staff = req.body.staff || (req.body.timekeeper ? 'coordinator' : null);
+  if (staff && !['coordinator', 'baanleider'].includes(staff)) bad('Onbekende rol');
+  if (roleId != null) staff = null; // een functie of een staffrol, niet beide
   if (roleId != null) {
     const role = await get('SELECT * FROM roles WHERE id=? AND day_id=?', [roleId, o.day_id]);
     if (!role) bad('Onbekende functie');
     const other = await get('SELECT name FROM observers WHERE day_id=? AND role_id=? AND id!=? AND status=\'linked\'', [o.day_id, roleId, o.id]);
     if (other) bad(`De functie ${role.name} is al gekoppeld aan ${other.name}. Ontkoppel die waarnemer eerst.`, 409);
   }
-  const linked = roleId != null || timekeeper;
-  await run('UPDATE observers SET role_id=?,timekeeper=?,status=? WHERE id=?', [roleId, timekeeper ? 1 : 0, linked ? 'linked' : 'pending', o.id]);
+  const linked = roleId != null || !!staff;
+  await run('UPDATE observers SET role_id=?,staff=?,timekeeper=0,status=? WHERE id=?', [roleId, staff, linked ? 'linked' : 'pending', o.id]);
   let label = 'ontkoppeld';
   if (roleId != null) label = `gekoppeld aan ${(await get('SELECT name FROM roles WHERE id=?', [roleId])).name}`;
-  if (timekeeper) label = (roleId != null ? label + ' en ' : '') + 'tijdwaarnemer';
+  if (staff) label = `gekoppeld als ${staff === 'coordinator' ? 'coördinator' : 'baanleider'}`;
   await logEvent(o.day_id, 'KOPPELING', 'i', `${o.name} ${label} · ${who(req)}`);
   emit(o.day_id);
   res.json({ ok: true });
 }));
 juryRouter.post('/observers/:id/reject', requireUser, loadObserver, ah(async (req, res) => {
-  await run('UPDATE observers SET status=\'rejected\',role_id=NULL,timekeeper=0 WHERE id=?', [req.obs.id]);
+  await run('UPDATE observers SET status=\'rejected\',role_id=NULL,timekeeper=0,staff=NULL WHERE id=?', [req.obs.id]);
   await logEvent(req.obs.day_id, 'AANMELDING', 'w', `${req.obs.name} geweigerd · ${who(req)}`);
   emit(req.obs.day_id);
   res.json({ ok: true });

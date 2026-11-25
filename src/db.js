@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS observers(
 CREATE TABLE IF NOT EXISTS scores(
   team_id INTEGER, criterion_id INTEGER, role_id INTEGER, value INTEGER, note TEXT,
   observer_id INTEGER, updated_at INTEGER, PRIMARY KEY(team_id,criterion_id,role_id));
+CREATE TABLE IF NOT EXISTS rescues(team_id INTEGER, seq INTEGER, at INTEGER, PRIMARY KEY(team_id,seq));
 CREATE TABLE IF NOT EXISTS finals(team_id INTEGER, role_id INTEGER, at INTEGER, PRIMARY KEY(team_id,role_id));
 CREATE TABLE IF NOT EXISTS corrections(
   id INTEGER PRIMARY KEY AUTOINCREMENT, team_id INTEGER, criterion_id INTEGER, role_id INTEGER,
@@ -62,4 +63,10 @@ CREATE INDEX IF NOT EXISTS idx_events_day ON events(day_id,id);
 
 export async function migrate() {
   await db.executeMultiple(SCHEMA);
+  // Kolom "staff" (coordinator | baanleider) vervangt de oude vlag "timekeeper".
+  const cols = (await all('PRAGMA table_info(observers)')).map((c) => c.name);
+  if (!cols.includes('staff')) {
+    await run('ALTER TABLE observers ADD COLUMN staff TEXT');
+    await run('UPDATE observers SET staff=\'coordinator\' WHERE timekeeper=1');
+  }
 }

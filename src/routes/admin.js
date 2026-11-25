@@ -21,7 +21,7 @@ adminRouter.get('/days', requireUser, ah(async (req, res) => {
 adminRouter.post('/days', requireAdmin, ah(async (req, res) => {
   const title = str(req.body.title, 120);
   if (!title) bad('Geef de wedstrijddag een naam.');
-  const id = await createDay({ title, date: str(req.body.date, 20), place: str(req.body.place, 120), trophy: str(req.body.trophy, 120) });
+  const id = await createDay({ title, date: str(req.body.date, 20), place: str(req.body.place, 120), trophy: str(req.body.trophy, 120), victims: req.body.victims });
   res.json({ id });
 }));
 
@@ -52,6 +52,14 @@ adminRouter.patch('/days/:dayId', requireAdmin, dayAccess, ah(async (req, res) =
     settings.wrapMin = num(s.wrapMin, 0, 60, settings.wrapMin);
     settings.noteBelow = num(s.noteBelow, 0, 10, settings.noteBelow);
     if (['floor', 'round', 'exact'].includes(s.rounding)) settings.rounding = s.rounding;
+    if (s.victims !== undefined) {
+      const v = Math.max(1, Math.min(10, Math.round(Number(s.victims)) || 1));
+      if (v !== settings.victims) {
+        const begun = await get('SELECT COUNT(*) AS n FROM teams WHERE day_id=? AND started_at IS NOT NULL', [req.dayId]);
+        if (begun.n) bad('Het aantal slachtoffers kan niet meer gewijzigd worden: de wedstrijd is al begonnen.', 409);
+        settings.victims = v;
+      }
+    }
   }
   await run('UPDATE days SET title=?,date=?,place=?,trophy=?,settings=? WHERE id=?', [
     b.title !== undefined ? str(b.title, 120) || d.title : d.title,
@@ -68,6 +76,7 @@ adminRouter.delete('/days/:dayId', requireAdmin, dayAccess, ah(async (req, res) 
   const T = '(SELECT id FROM teams WHERE day_id=?)';
   await run(`DELETE FROM scores WHERE team_id IN ${T}`, [id]);
   await run(`DELETE FROM finals WHERE team_id IN ${T}`, [id]);
+  await run(`DELETE FROM rescues WHERE team_id IN ${T}`, [id]);
   await run(`DELETE FROM corrections WHERE team_id IN ${T}`, [id]);
   await run('DELETE FROM criterion_roles WHERE criterion_id IN (SELECT id FROM criteria WHERE day_id=?)', [id]);
   for (const t of ['criteria', 'categories', 'roles', 'observers', 'events', 'teams']) await run(`DELETE FROM ${t} WHERE day_id=?`, [id]);

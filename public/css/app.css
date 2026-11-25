@@ -253,3 +253,5 @@ svg text{fill:var(--ink2);font:12px var(--sans)}svg .ink{fill:var(--ink)}
 .report .big3{display:flex;gap:24px;flex-wrap:wrap}.report .big3 div{min-width:120px}.report .big3 b{font:700 30px var(--mono);display:block}
 .report .barx{height:10px;background:#e5e7eb;border-radius:5px;position:relative}.report .barx i{position:absolute;inset:0 auto 0 0;background:#0e7490;border-radius:5px}.report .barx u{position:absolute;top:-3px;bottom:-3px;width:2px;background:#f97316}
 @media print{body{background:#fff!important;padding:0}.noprint{display:none!important}.report{box-shadow:none;border-radius:0;padding:0}}
+
+.btn.big{min-height:64px;font-size:18px;width:100%;justify-content:center;margin-top:10px}
