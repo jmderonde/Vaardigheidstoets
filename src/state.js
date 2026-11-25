@@ -22,7 +22,7 @@ export async function juryState(dayId, user) {
     all('SELECT id,name,role_id,staff,status,last_seen,created_at FROM observers WHERE day_id=? AND status!=\'rejected\' ORDER BY id', [dayId]),
     all('SELECT id,at,kind,tone,text FROM events WHERE day_id=? ORDER BY id DESC LIMIT 80', [dayId]),
   ]);
-  const results = computeResults(cfg, scores, finals, now);
+  const results = computeResults(cfg, scores, finals, now, resc);
   const byId = Object.fromEntries(results.map((r) => [r.id, r]));
   const act = activeTeam(cfg, now);
   const { day, settings: s } = cfg;
@@ -47,8 +47,8 @@ export async function teamSheet(teamId) {
   const t = await get('SELECT * FROM teams WHERE id=?', [teamId]);
   const cfg = await loadConfig(t.day_id);
   const now = Date.now();
-  const [scores, finals] = await Promise.all([loadScores(t.day_id), loadFinals(t.day_id)]);
-  const results = computeResults(cfg, scores, finals, now);
+  const [scores, finals, resc] = await Promise.all([loadScores(t.day_id), loadFinals(t.day_id), loadRescues(t.day_id)]);
+  const results = computeResults(cfg, scores, finals, now, resc);
   const r = results.find((x) => x.id === teamId);
   const mine = {};
   scores.filter((x) => x.team_id === teamId).forEach((x) => { mine[`${x.criterion_id}|${x.role_id}`] = { value: x.value, note: x.note }; });
@@ -63,7 +63,7 @@ export async function teamSheet(teamId) {
     avg[c.id] = v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   });
   return {
-    team: teamView(t, r, cfg.settings), day: { title: cfg.day.title, date: cfg.day.date, place: cfg.day.place },
+    team: teamView(t, r, cfg.settings, resc.filter((x) => x.team_id === t.id)), day: { title: cfg.day.title, date: cfg.day.date, place: cfg.day.place },
     settings: cfg.settings, roles: cfg.roles, categories: cfg.categories, cells: mine, roleSum: r.roleSum,
     catAvg: r.catAvg, allAvg: avg, corrections, ranked: done.length, labels: LABELS,
   };
@@ -141,7 +141,7 @@ export async function displayState(day) {
   const now = Date.now();
   const cfg = await loadConfig(day.id);
   const [scores, finals, resc] = await Promise.all([loadScores(day.id), loadFinals(day.id), loadRescues(day.id)]);
-  const results = computeResults(cfg, scores, finals, now);
+  const results = computeResults(cfg, scores, finals, now, resc);
   const s = cfg.settings;
   const act = activeTeam(cfg, now);
   const ranked = results.filter((r) => r.status === 'done').sort((a, b) => a.rank - b.rank);
@@ -153,7 +153,7 @@ export async function displayState(day) {
   const nameOf = Object.fromEntries(cfg.teams.map((t) => [t.id, t.name]));
   const pub = (r, t, withScore) => ({
     id: t.id, name: t.name, meld: t.meld, start: t.start, status: r.status, out_reason: t.out ? t.out_reason : null,
-    gemeld: !!t.gemeld_at, ready: !!t.ready_at, victims: s.victims, rescued_n: resc.filter((x) => x.team_id === t.id).length || (t.rescued_at ? s.victims : 0), started_at: t.started_at, ended_at: t.ended_at, rescued_at: t.rescued_at, wrap_end: wrapEnd(t, s),
+    gemeld: !!t.gemeld_at, ready: !!t.ready_at, victims: s.victims, rescued_n: resc.filter((x) => x.team_id === t.id).length || (t.rescued_at ? s.victims : 0), rescues: resc.filter((x) => x.team_id === t.id).map((x) => x.at - t.started_at), started_at: t.started_at, ended_at: t.ended_at, rescued_at: t.rescued_at, wrap_end: wrapEnd(t, s),
     speelMs: r.speelMs, redMs: r.redMs,
     ...(withScore ? { rank: r.rank || null, crit: r.crit, red: r.red, sp: r.sp, total: r.total } : {}),
   });

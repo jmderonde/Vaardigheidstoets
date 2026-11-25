@@ -34,7 +34,7 @@ export async function reportView(root, [dayId, teamId]) {
     <div style="color:#0e7490;font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:12px">${esc(d.day.title)} · ${esc(d.day.date || '')} ${esc(d.day.place || '')}</div>
     <h1>${esc(t.name)}</h1>
     <div class="big3"><div><span>Plek</span><b>${t.rank ? t.rank + ' van ' + d.ranked : '–'}</b></div><div><span>Totaal</span><b>${fmtN(t.total)}</b></div><div><span>Criteria</span><b>${t.crit}</b></div><div><span>Bonus redtijd</span><b>+${fmtN(t.red)}</b></div><div><span>Bonus speeltijd</span><b>+${fmtN(t.sp)}</b></div></div>
-    <p style="color:#555">Speeltijd ${fmtMs(t.speelMs)} · redtijd ${fmtMs(t.redMs)}</p>
+    <p style="color:#555">Speeltijd ${fmtMs(t.speelMs)} · ${t.victims > 1 ? 'redtijden' : 'redtijd'} ${t.rescues && t.rescues.length ? t.rescues.map((ms, i) => (t.victims > 1 ? `slachtoffer ${i + 1}: ` : '') + fmtMs(ms)).join(' · ') : '–'}</p>
     <h2>Gemiddelde score per categorie</h2><p style="color:#555;font-size:12px;margin:0 0 6px">Balk = deze ploeg (schaal 4–10), oranje streep = gemiddelde van alle ploegen.</p><table>${bars}</table>
     <h2>Scores per functie</h2><table><thead><tr><th style="text-align:left">Criterium</th>${roles.map((r) => `<th>${esc(r.name)}</th>`).join('')}<th style="text-align:right">Totaal</th></tr></thead><tbody>${rows}
      <tr style="font-weight:700"><td>Totaal per functie</td>${roles.map((r) => `<td style="text-align:center">${sum(r)}</td>`).join('')}<td style="text-align:right">${t.crit}</td></tr></tbody></table>

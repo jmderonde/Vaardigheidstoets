@@ -19,7 +19,7 @@ Webapp voor het digitaal beoordelen van brandweer-vaardigheidstoetsen. Een organ
 - Bonus: 1 punt (instelbaar) per resterende minuut speeltijd en per resterende minuut redtijd. Bij gelijke stand wint de minste speeltijd.
 - Beoordelen kan alleen terwijl de inzet loopt, plus een afrondtijd (standaard 5 minuten) na het einde. De server dwingt dit af, ook voor de offline wachtrij (op basis van het tijdstip van invoer).
 - Een volgende inzet kan pas starten als de afrondtijd van de vorige voorbij is.
-- Meerdere slachtoffers: stel het aantal in bij Algemeen. De redtijd loopt tot het laatste slachtoffer bevrijd is; het aantal staat vast zodra de eerste inzet start.
+- Meerdere slachtoffers: stel het aantal in bij Algemeen. De redtijd wordt per slachtoffer vastgelegd en elk slachtoffer levert een eigen bonus op (resterende minuten van de maximale redtijd); een slachtoffer dat niet gered wordt, levert niets op. Het aantal staat vast zodra de eerste inzet start.
 - Een ploeg kan vervallen (reden verplicht); de planning is aan te passen (tijden, volgorde, alles verschuiven).
 - De jury kan achteraf scores en tijden corrigeren; een toelichting is altijd verplicht en alles komt in het logboek.
 - Tijdens de prijsuitreiking stuurt de server alleen de gegevens van reeds onthulde plekken naar het groot scherm.

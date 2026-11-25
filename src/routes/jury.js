@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { all, get, run } from '../db.js';
 import { dayAccess, requireUser } from '../auth.js';
 import { ah, bad, int, normHM, hm, toHM, str } from '../util.js';
-import { cellsOf, computeResults, loadConfig, loadFinals, loadScores, logEvent, SC_MAX, SC_MIN, teamStatus } from '../logic.js';
+import { cellsOf, computeResults, loadConfig, loadFinals, loadRescues, loadScores, logEvent, SC_MAX, SC_MIN, teamStatus } from '../logic.js';
 import { emit, subscribe } from '../hub.js';
 import { juryState, teamSheet } from '../state.js';
 import { loadTeam } from './admin.js';
@@ -124,16 +124,30 @@ juryRouter.post('/teams/:id/correct-time', requireUser, loadTeam, ah(async (req,
   const reason = str(req.body.reason, 300);
   if (reason.length < 3) bad('Een correctie vraagt om een toelichting.');
   if (!t.started_at) bad('Deze ploeg is nog niet gestart.', 409);
+  const cfg = await loadConfig(t.day_id);
+  const victims = cfg.settings.victims || 1;
   const sec = (v) => { const n = Number(v); if (!Number.isFinite(n) || n < 0 || n > 6 * 3600) bad('Geef een tijd in seconden.'); return Math.round(n * 1000); };
-  const patch = {};
-  if (req.body.speel_s !== undefined && req.body.speel_s !== null && req.body.speel_s !== '') patch.ended_at = t.started_at + sec(req.body.speel_s);
-  if (req.body.red_s !== undefined) patch.rescued_at = req.body.red_s === null || req.body.red_s === '' ? null : t.started_at + sec(req.body.red_s);
-  if (!Object.keys(patch).length) bad('Niets om te wijzigen.');
-  const ended = patch.ended_at ?? t.ended_at;
-  const rescued = 'rescued_at' in patch ? patch.rescued_at : t.rescued_at;
-  if (ended && rescued && rescued > ended) bad('De redtijd kan niet langer zijn dan de speeltijd.');
-  await run('UPDATE teams SET ended_at=?,rescued_at=? WHERE id=?', [ended, rescued, t.id]);
-  await logEvent(t.day_id, 'CORRECTIE', 'v', `${t.name} · tijd aangepast (speeltijd ${ended ? fmtMs(ended - t.started_at) : '–'}, redtijd ${rescued ? fmtMs(rescued - t.started_at) : '–'}) · “${reason}” · ${who(req)}`);
+  let ended = t.ended_at;
+  if (req.body.speel_s !== undefined && req.body.speel_s !== null && req.body.speel_s !== '') ended = t.started_at + sec(req.body.speel_s);
+  // Redtijden per slachtoffer (rescues_s); bij één slachtoffer mag ook red_s.
+  let rescuesMs = null;
+  if (Array.isArray(req.body.rescues_s)) rescuesMs = req.body.rescues_s.filter((x) => x !== null && x !== '').slice(0, victims).map(sec);
+  else if (req.body.red_s !== undefined) {
+    if (victims > 1) bad('Geef de redtijden per slachtoffer op (rescues_s).');
+    rescuesMs = req.body.red_s === null || req.body.red_s === '' ? [] : [sec(req.body.red_s)];
+  }
+  if (ended === t.ended_at && rescuesMs === null) bad('Niets om te wijzigen.');
+  const times = rescuesMs ?? (await all('SELECT at FROM rescues WHERE team_id=? ORDER BY seq', [t.id])).map((r) => r.at - t.started_at);
+  if (ended && times.some((ms) => t.started_at + ms > ended)) bad('Een redtijd kan niet langer zijn dan de speeltijd.');
+  if (rescuesMs !== null) {
+    await run('DELETE FROM rescues WHERE team_id=?', [t.id]);
+    for (const [i, ms] of rescuesMs.entries()) await run('INSERT INTO rescues(team_id,seq,at) VALUES(?,?,?)', [t.id, i + 1, t.started_at + ms]);
+  }
+  const all3 = rescuesMs !== null ? rescuesMs.length >= victims : !!t.rescued_at;
+  const rescuedAt = rescuesMs !== null ? (all3 && rescuesMs.length ? t.started_at + Math.max(...rescuesMs) : null) : t.rescued_at;
+  await run('UPDATE teams SET ended_at=?,rescued_at=? WHERE id=?', [ended, rescuedAt, t.id]);
+  const redTxt = times.length ? times.map((ms) => fmtMs(ms)).join(', ') : '–';
+  await logEvent(t.day_id, 'CORRECTIE', 'v', `${t.name} · tijd aangepast (speeltijd ${ended ? fmtMs(ended - t.started_at) : '–'}, redtijd${victims > 1 ? 'en' : ''} ${redTxt}) · “${reason}” · ${who(req)}`);
   emit(t.day_id);
   res.json({ ok: true });
 }));
@@ -199,14 +213,14 @@ juryRouter.post('/days/:dayId/ceremony', dayAccess, ah(async (req, res) => {
 /* ---------- export en rapport ---------- */
 juryRouter.get('/days/:dayId/export.csv', dayAccess, ah(async (req, res) => {
   const cfg = await loadConfig(req.dayId);
-  const [scores, finals] = await Promise.all([loadScores(req.dayId), loadFinals(req.dayId)]);
-  const results = computeResults(cfg, scores, finals, Date.now());
+  const [scores, finals, resc] = await Promise.all([loadScores(req.dayId), loadFinals(req.dayId), loadRescues(req.dayId)]);
+  const results = computeResults(cfg, scores, finals, Date.now(), resc);
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const mmss = (ms) => (ms == null ? '' : fmtMs(ms));
-  const head = ['Plek', 'Post', 'Status', 'Punten criteria', 'Bonus redtijd', 'Bonus speeltijd', 'Totaal', 'Speeltijd', 'Redtijd', ...cfg.roles.map((r) => `Totaal ${r.name}`)];
+  const head = ['Plek', 'Post', 'Status', 'Punten criteria', 'Bonus redtijd', 'Bonus speeltijd', 'Totaal', 'Speeltijd', 'Redtijd (laatste slachtoffer)', 'Redtijden per slachtoffer', ...cfg.roles.map((r) => `Totaal ${r.name}`)];
   const rows = [...results].sort((a, b) => (a.rank || 99) - (b.rank || 99) || a.id - b.id).map((r) => {
     const t = cfg.teams.find((x) => x.id === r.id);
-    return [r.rank || '', t.name, r.status, r.crit, r.red, r.sp, r.total, mmss(r.speelMs), mmss(r.redMs), ...cfg.roles.map((ro) => r.roleSum[ro.id] || 0)];
+    return [r.rank || '', t.name, r.status, r.crit, r.red, r.sp, r.total, mmss(r.speelMs), mmss(r.redMs), r.redTimes.map(mmss).join(' / '), ...cfg.roles.map((ro) => r.roleSum[ro.id] || 0)];
   });
   // detailregels
   const detail = [['Post', 'Functie', 'Categorie', 'Criterium', 'Score', 'Toelichting']];

@@ -59,6 +59,7 @@ export function liveHTML(t, s, controls = '') {
     <div class="mid"><div class="big" data-l="big">00:00</div><div class="lbl" data-l="lbl">speeltijd</div><div class="max" data-l="max">max ${fmtMs(s.maxSpeelMin * 60000)}</div></div></div>
    <div><div class="team">${idle ? 'Geen inzet actief' : esc(t.name)}</div><div style="margin-top:8px">${state}</div>
     <div class="meta"><div class="kv"><small data-l="redlbl">Redtijd</small><b class="g" data-l="red">–</b></div><div class="kv"><small>Bonus redtijd</small><b class="g" data-l="bred">–</b></div><div class="kv"><small>Bonus speeltijd nu</small><b class="c" data-l="bsp">–</b></div></div>
+    <div class="mono" data-l="resl" style="color:var(--ink2);font-size:13px;margin:-6px 0 10px"></div>
     <div class="steps">${stepsOf(t).join('')}</div>${controls}</div></div>`;
 }
 
@@ -77,10 +78,12 @@ export function tickLive(root, t, s, now) {
   q('max').textContent = wrap ? 'speeltijd ' + fmtMs(sp) : 'max ' + fmtMs(maxS);
   const red = t.rescued_at ? t.rescued_at - t.started_at : null;
   const V = t.victims || 1;
-  q('redlbl').textContent = V > 1 ? `Redtijd · ${t.rescued_n || 0}/${V} gered` : 'Redtijd';
+  q('redlbl').textContent = V > 1 ? `Redtijd laatste · ${t.rescued_n || 0}/${V} gered` : 'Redtijd';
   q('red').textContent = red != null ? fmtMs(red) : (t.ended_at ? 'niet gered' : fmtMs(now - t.started_at));
   q('red').style.opacity = red != null ? 1 : 0.6;
-  q('bred').textContent = red != null ? '+' + fmtN(bonusPts(red, s.maxRedMin, s)) : '–';
+  const rs = t.rescues || [];
+  q('bred').textContent = rs.length ? '+' + fmtN(rs.reduce((sum, ms) => sum + bonusPts(ms, s.maxRedMin, s), 0)) : '–';
+  q('resl').textContent = V > 1 && rs.length ? 'Per slachtoffer: ' + rs.map((ms, i) => `${i + 1}: ${fmtMs(ms)} (+${fmtN(bonusPts(ms, s.maxRedMin, s))})`).join(' · ') : '';
   q('bsp').textContent = '+' + fmtN(bonusPts(sp, s.maxSpeelMin, s));
 }
 

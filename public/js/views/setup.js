@@ -38,7 +38,7 @@ export async function setupView(root, [dayId]) {
       <label class="f">Aantal slachtoffers<input name="victims" type="number" min="1" max="10" value="${s.victims || 1}" ${started() ? 'disabled' : ''}></label>
       <label class="f">Afrondtijd waarnemers (min)<input name="wrapMin" type="number" min="0" max="60" value="${s.wrapMin}"></label>
       <label class="f">Toelichting verplicht bij score t/m<input name="noteBelow" type="number" min="0" max="10" value="${s.noteBelow}"></label></div>
-      <p class="hint">Meerdere slachtoffers: de redtijd loopt tot het <b>laatste</b> slachtoffer bevrijd is. Het aantal staat vast zodra de eerste inzet start. Bonus = resterende minuten × punten per minuut, nooit lager dan 0. Bij gelijke stand wint de minste speeltijd. Een volgende inzet kan pas starten als de afrondtijd van de vorige voorbij is.</p>
+      <p class="hint">Meerdere slachtoffers: de redtijd wordt <b>per slachtoffer</b> vastgelegd en elk slachtoffer levert een eigen bonus op (resterende minuten van de maximale redtijd). Het aantal staat vast zodra de eerste inzet start. Bonus = resterende minuten × punten per minuut, nooit lager dan 0. Bij gelijke stand wint de minste speeltijd. Een volgende inzet kan pas starten als de afrondtijd van de vorige voorbij is.</p>
       <button class="btn pri">Opslaan</button></form></section>
      <section class="p" style="margin-top:14px"><h2><span>Gevaarlijke zone</span></h2><button class="btn dng" id="del">Wedstrijddag verwijderen</button><p class="hint">Verwijdert ook alle ploegen, scores en aanmeldingen. Dit kan niet ongedaan gemaakt worden.</p></section>`;
   };

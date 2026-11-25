@@ -289,6 +289,15 @@ s3 = (await admin.get(`/days/${d3.id}/state`)).teams[0];
 assert.equal(s3.rescued_n, 2);
 assert.ok(s3.rescued_at);
 assert.equal(s3.rescues.length, 2);
+assert.equal(s3.red, 38); // bonus per slachtoffer: 2 x 19 resterende minuten
+await admin.post(`/teams/${tm3}/action`, { action: 'end' });
+await admin.post(`/teams/${tm3}/correct-time`, { rescues_s: [60, 120], reason: '' }, 400);
+await admin.post(`/teams/${tm3}/correct-time`, { red_s: 60, reason: 'test' }, 400);
+await admin.post(`/teams/${tm3}/correct-time`, { speel_s: 600, rescues_s: [60, 120], reason: 'Tijden uit het logboek van de baanleider' });
+s3 = (await admin.get(`/days/${d3.id}/state`)).teams[0];
+assert.deepEqual(s3.rescues, [60000, 120000]);
+assert.equal(s3.red, 37); // 19 + 18
+ok('redtijd en bonus per slachtoffer: elke redding telt apart mee en is per slachtoffer te corrigeren');
 ok('meerdere slachtoffers: redtijd pas bepaald na het laatste slachtoffer; ongedaan maken werkt; aantal vergrendelt na de start');
 await admin.del(`/days/${d3.id}`);
 

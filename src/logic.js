@@ -112,8 +112,10 @@ export function cellsOf(cfg) {
 }
 
 /* Resultaten per ploeg. Rangschikking alleen onder afgeronde ploegen (status "done"). */
-export function computeResults(cfg, scores, finals, now) {
+export function computeResults(cfg, scores, finals, now, rescues = []) {
   const s = cfg.settings;
+  const resBy = {};
+  rescues.forEach((r) => { (resBy[r.team_id] ||= []).push(r.at); });
   const cells = cellsOf(cfg);
   const byTeam = {};
   scores.forEach((x) => { (byTeam[x.team_id] ||= {})[`${x.criterion_id}|${x.role_id}`] = x; });
@@ -134,11 +136,14 @@ export function computeResults(cfg, scores, finals, now) {
     });
     const status = teamStatus(t, now, s);
     const tm = teamTimes(t, now);
-    const red = bonus(tm.red, s.maxRedMin, s);
+    // Bonus per slachtoffer: elke redding telt apart mee (oude gegevens zonder losse tijden: de laatste redtijd voor alle slachtoffers).
+    const rs = resBy[t.id] || (t.rescued_at ? Array(s.victims || 1).fill(t.rescued_at) : []);
+    const redTimes = t.started_at ? rs.map((at) => at - t.started_at) : [];
+    const red = redTimes.reduce((sum, ms) => sum + bonus(ms, s.maxRedMin, s), 0);
     const sp = bonus(tm.speel, s.maxSpeelMin, s);
     return {
       id: t.id, status, crit, have, need: cells.length, red, sp, total: crit + red + sp,
-      speelMs: tm.speel, redMs: tm.red, roleSum, roleHave,
+      speelMs: tm.speel, redMs: tm.red, redTimes, roleSum, roleHave,
       catAvg: Object.fromEntries(Object.entries(catAgg).map(([k, a]) => [k, a.s / a.n])),
       finishedRoles: [...(fin[t.id] || [])],
       complete: have === cells.length && tm.speel != null && tm.red != null,

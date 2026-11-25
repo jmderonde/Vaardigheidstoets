@@ -136,7 +136,7 @@ export async function consoleView(root, [dayId, tabParam]) {
       <a class="btn sm" href="/report/${dayId}/${t.id}" target="_blank" rel="noopener">Rapport</a></div></div>
      <div class="meta" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))"><div class="kv"><small>Status</small><b style="font-size:16px">${P.LAB[t.status]}</b></div><div class="kv"><small>Plek</small><b>${t.rank || '–'}</b></div>
       <div class="kv"><small>Criteria</small><b>${t.crit}</b></div><div class="kv"><small>Bonus redtijd</small><b class="g">+${fmtN(t.red)}</b></div><div class="kv"><small>Bonus speeltijd</small><b class="g">+${fmtN(t.sp)}</b></div><div class="kv"><small>Totaal</small><b class="c">${fmtN(t.total)}</b></div></div>
-     <div class="row" style="margin-bottom:10px"><span class="mut">Speeltijd <b class="mono" style="color:var(--ink)">${fmtMs(t.speelMs)}</b> · redtijd <b class="mono" style="color:var(--ink)">${fmtMs(t.redMs)}</b></span>
+     <div class="row" style="margin-bottom:10px"><span class="mut">Speeltijd <b class="mono" style="color:var(--ink)">${fmtMs(t.speelMs)}</b> · ${t.victims > 1 ? 'redtijden' : 'redtijd'} <b class="mono" style="color:var(--ink)">${t.rescues && t.rescues.length ? t.rescues.map((ms, i) => (t.victims > 1 ? `${i + 1}: ` : '') + fmtMs(ms)).join(' · ') : '–'}</b></span>
       <button class="btn sm" data-fixtime ${t.started_at ? '' : 'disabled'}>Tijd corrigeren</button></div>
      <div class="scroll sheet"><table><thead><tr><th>Criterium</th>${roles.map((r) => `<th class="c">${esc(r.name)}${t.finishedRoles.includes(r.id) ? ' 🔒' : ''}</th>`).join('')}<th class="n">Totaal</th></tr></thead><tbody>${rows}
       <tr style="font-weight:700"><td>Totaal per functie</td>${roles.map((r) => `<td class="c mono">${sum(r)}</td>`).join('')}<td class="n mono">${t.crit}</td></tr></tbody></table></div>
@@ -221,14 +221,17 @@ export async function consoleView(root, [dayId, tabParam]) {
     }
     if (t.dataset.fixtime !== undefined) {
       const tm = sheet.team;
-      const v = await ask({ title: 'Tijd corrigeren', text: 'Vul tijden in als mm:ss. Laat de redtijd leeg als het slachtoffer niet gered is.', fields: [
+      const V = tm.victims || 1;
+      const redFields = Array.from({ length: V }, (_, i) => ({ name: 'red' + i, label: V > 1 ? `Redtijd slachtoffer ${i + 1} (mm:ss)` : 'Redtijd (mm:ss)', value: tm.rescues && tm.rescues[i] != null ? fmtMs(tm.rescues[i]) : '' }));
+      const v = await ask({ title: 'Tijd corrigeren', text: `Vul tijden in als mm:ss. Laat een redtijd leeg als dat slachtoffer niet gered is (die telt dan niet mee voor de bonus).`, fields: [
         { name: 'speel', label: 'Speeltijd (mm:ss)', value: tm.speelMs != null ? fmtMs(tm.speelMs) : '' },
-        { name: 'red', label: 'Redtijd (mm:ss)', value: tm.redMs != null ? fmtMs(tm.redMs) : '' },
+        ...redFields,
         { name: 'reason', label: 'Toelichting (verplicht)', type: 'textarea', required: true, minLength: 3 }] });
       if (!v) return;
-      const sp = parseMs(v.speel), rd = parseMs(v.red);
-      if (Number.isNaN(sp) || Number.isNaN(rd)) return toast('Gebruik mm:ss', 'bad');
-      await post(`/teams/${sheetTeam}/correct-time`, { speel_s: sp == null ? undefined : sp / 1000, red_s: rd == null ? null : rd / 1000, reason: v.reason }); await refresh(); return;
+      const sp = parseMs(v.speel);
+      const reds = redFields.map((f) => parseMs(v[f.name]));
+      if (Number.isNaN(sp) || reds.some((x) => Number.isNaN(x))) return toast('Gebruik mm:ss', 'bad');
+      await post(`/teams/${sheetTeam}/correct-time`, { speel_s: sp == null ? undefined : sp / 1000, rescues_s: reds.filter((x) => x != null).map((x) => x / 1000), reason: v.reason }); await refresh(); return;
     }
     if (t.dataset.unlock) {
       const v = await ask({ title: 'Beoordeling ontgrendelen', text: 'De waarnemer kan daarna weer scores aanpassen zolang het beoordelingsvenster open is.', fields: [{ name: 'reason', label: 'Toelichting (verplicht)', required: true, minLength: 3 }] });

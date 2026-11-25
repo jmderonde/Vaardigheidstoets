@@ -56,7 +56,7 @@ export async function performTeamAction(t, action, { reason = '', on = true } = 
       await run('INSERT OR REPLACE INTO rescues(team_id,seq,at) VALUES(?,?,?)', [t.id, seq, now]);
       if (seq >= victims) await run('UPDATE teams SET rescued_at=? WHERE id=?', [now, t.id]);
       await log('GERED', 'o', victims > 1
-        ? `Slachtoffer ${seq} van ${victims} gered · ${fmtMs(now - t.started_at)}${seq >= victims ? ' · redtijd bepaald' : ''}`
+        ? `Slachtoffer ${seq} van ${victims} gered · ${fmtMs(now - t.started_at)}`
         : `Slachtoffer gered · redtijd ${fmtMs(now - t.started_at)}`);
       break;
     }
