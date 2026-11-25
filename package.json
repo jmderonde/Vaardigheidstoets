@@ -1,0 +1,19 @@
+{
+  "name": "vaardigheidstoets",
+  "version": "0.1.0",
+  "description": "Digitale beoordeling van brandweer vaardigheidstoetsen: beheer, jury-console, waarnemers en prijsuitreiking.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/smoke.mjs",
+    "demo": "node scripts/demo.mjs --yes"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4"
+  }
+}
